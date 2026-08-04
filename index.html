@@ -1357,6 +1357,7 @@ async function tryFetchBundlesFromOffice(manual){
   }
   try{
     const data = await apiGet('bundles');
+    const remoteIds = new Set((data.bundles||[]).map(r=>r.id));
     (data.bundles||[]).forEach(remote=>{
       const local = findBundle(remote.id);
       if(local){
@@ -1365,10 +1366,23 @@ async function tryFetchBundlesFromOffice(manual){
         DATA.bundles.push({...remote, synced:true});
       }
     });
+    // A bundle that was previously confirmed synced but no longer appears in the
+    // Sheet has been deleted there on purpose - remove it here too. Bundles still
+    // waiting in the pending queue (never confirmed synced) are left alone, since
+    // "not in the Sheet yet" is different from "deleted from the Sheet".
+    const removedIds = DATA.bundles.filter(b => b.synced && !remoteIds.has(b.id)).map(b=>b.id);
+    if(removedIds.length){
+      DATA.bundles = DATA.bundles.filter(b => !removedIds.includes(b.id));
+    }
     saveData(DATA);
     populateBundleSelect();
     renderBundleList();
-    if(manual) toast('Bundle list refreshed from office.');
+    renderLedger();
+    if(manual){
+      toast(removedIds.length
+        ? 'Bundle list refreshed - '+removedIds.length+' removed bundle(s) cleared from this iPad.'
+        : 'Bundle list refreshed from office.');
+    }
   }catch(err){
     if(manual) toast('Could not reach office: '+err.message, true);
   }
