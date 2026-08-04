@@ -267,21 +267,31 @@
     <div class="panel">
       <h2>Create Master Bundle</h2>
 
-      <label>Dimension</label>
-      <select id="mb-dimension"><option value="">- Select -</option></select>
+      <label>Thickness (mm)</label>
+      <select id="mb-thickness"><option value="">- Select -</option></select>
+
+      <label>Width (mm)</label>
+      <select id="mb-width"><option value="">- Select -</option></select>
+
+      <label>Length (mm)</label>
+      <select id="mb-length"><option value="">- Select -</option></select>
 
       <label>Piece Count</label>
-      <div class="stepper">
-        <button type="button" data-target="mb-count" data-step="-1">-</button>
+      <div class="stepper" style="height:auto;">
+        <button type="button" data-target="mb-count" data-step="-100" style="width:auto;padding:0 8px;font-size:13px;">-100</button>
+        <button type="button" data-target="mb-count" data-step="-10" style="width:auto;padding:0 8px;font-size:13px;">-10</button>
+        <button type="button" data-target="mb-count" data-step="-1" style="width:auto;padding:0 8px;">-1</button>
         <div class="val" id="mb-count-val">0</div>
-        <button type="button" data-target="mb-count" data-step="1">+</button>
+        <button type="button" data-target="mb-count" data-step="1" style="width:auto;padding:0 8px;">+1</button>
+        <button type="button" data-target="mb-count" data-step="10" style="width:auto;padding:0 8px;font-size:13px;">+10</button>
+        <button type="button" data-target="mb-count" data-step="100" style="width:auto;padding:0 8px;font-size:13px;">+100</button>
       </div>
       <div class="stepper-presets" data-target="mb-count">
-        <button type="button" data-set="12">12</button>
-        <button type="button" data-set="24">24</button>
-        <button type="button" data-set="48">48</button>
-        <button type="button" data-set="96">96</button>
-        <button type="button" data-reset="1">Reset</button>
+        <button type="button" data-set="100">100</button>
+        <button type="button" data-set="200">200</button>
+        <button type="button" data-set="500">500</button>
+        <button type="button" data-set="1000">1000</button>
+        <button type="button" data-reset="0">Reset</button>
       </div>
 
       <label>Container Number</label>
@@ -476,13 +486,17 @@ function loadData(){
 function saveData(d){ localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
 
 const DEFAULT_SETTINGS = {
-  DIMENSION: ['4m x 4x4 inch','4m x 3x3 inch','2m x 4x2 inch'],
+  THICKNESS: ['25','50','75'],
+  WIDTH: ['75','100','150'],
+  LENGTH: ['2000','4000','6000'],
   CONTAINER: [],
   INVOICE: [],
   SUPPLIER: [],
   STATION: ['Resaw 1','Resaw 2','Cross-cut','Hand Station'],
   STAFF: [],
-  CUTSIZE: ['1.2m x 4x2','1.0m x 3x3','0.6m x 4x4'],
+  CUTTHICKNESS: ['20','25','30'],
+  CUTWIDTH: ['75','100'],
+  CUTLENGTH: ['600','1000','1200'],
   CUSTOMER: []
 };
 function loadSettingsCache(){
@@ -615,18 +629,33 @@ function fillSelect(selectEl, list, placeholder){
   if(list && list.includes(current)) selectEl.value = current;
 }
 function refreshAllDropdowns(){
-  fillSelect(document.getElementById('mb-dimension'), SETTINGS.DIMENSION, '- Select -');
+  fillSelect(document.getElementById('mb-thickness'), SETTINGS.THICKNESS, '- Select -');
+  fillSelect(document.getElementById('mb-width'), SETTINGS.WIDTH, '- Select -');
+  fillSelect(document.getElementById('mb-length'), SETTINGS.LENGTH, '- Select -');
   fillSelect(document.getElementById('mb-container'), SETTINGS.CONTAINER, '- Select -');
   fillSelect(document.getElementById('mb-invoice'), SETTINGS.INVOICE, '- Select -');
   fillSelect(document.getElementById('mb-supplier'), SETTINGS.SUPPLIER, '- Select -');
   fillSelect(document.getElementById('cr-station'), SETTINGS.STATION, '- Select station -');
   fillSelect(document.getElementById('session-select'), SETTINGS.STAFF, '- Select your name -');
+  refreshExistingCutRowSelects();
   renderSettingsPreview();
+}
+function refreshExistingCutRowSelects(){
+  document.querySelectorAll('#cr-cut-rows .cut-row').forEach(row=>{
+    const tSel = row.querySelector('.cut-thickness');
+    const wSel = row.querySelector('.cut-width');
+    const lSel = row.querySelector('.cut-length');
+    const forSel = row.querySelector('.cut-for');
+    if(tSel) fillSelect(tSel, SETTINGS.CUTTHICKNESS, '- Select -');
+    if(wSel) fillSelect(wSel, SETTINGS.CUTWIDTH, '- Select -');
+    if(lSel) fillSelect(lSel, SETTINGS.CUTLENGTH, '- Select -');
+    if(forSel) fillSelect(forSel, SETTINGS.CUSTOMER, '- Select customer/order -');
+  });
 }
 function renderSettingsPreview(){
   const el = document.getElementById('sync-settings-preview');
   if(!el) return;
-  const cats = ['DIMENSION','CONTAINER','INVOICE','SUPPLIER','STATION','STAFF','CUTSIZE','CUSTOMER'];
+  const cats = ['THICKNESS','WIDTH','LENGTH','CONTAINER','INVOICE','SUPPLIER','STATION','STAFF','CUTTHICKNESS','CUTWIDTH','CUTLENGTH','CUSTOMER'];
   el.innerHTML = cats.map(c => `
     <div style="margin-bottom:10px;">
       <label style="margin-bottom:5px;">${c}</label>
@@ -721,21 +750,24 @@ function renderBundleList(){
 
 document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   if(!requireSessionPerson()) return;
-  const dimension = document.getElementById('mb-dimension').value;
+  const thickness = document.getElementById('mb-thickness').value;
+  const width = document.getElementById('mb-width').value;
+  const length = document.getElementById('mb-length').value;
   const count = getStepperValue('mb-count');
   const containerRef = document.getElementById('mb-container').value;
   const invoiceNumber = document.getElementById('mb-invoice').value;
   const supplier = document.getElementById('mb-supplier').value;
 
-  if(!dimension || !count || count<1 || !containerRef || !invoiceNumber || !supplier){
-    toast('Select dimension, container number, invoice number, supplier, and set a piece count above zero.', true);
+  if(!thickness || !width || !length || !count || count<1 || !containerRef || !invoiceNumber || !supplier){
+    toast('Select thickness, width, length, container number, invoice number, supplier, and set a piece count above zero.', true);
     return;
   }
+  const dimension = thickness+' x '+width+' x '+length+' mm';
   const b = {
     id: genMasterId(),
     type: 'master',
     parentId: null,
-    dimension,
+    dimension, thickness, width, length,
     pieceCount: count,
     containerRef, invoiceNumber, supplier, notes:'',
     status: 'in_stock',
@@ -752,7 +784,9 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   document.getElementById('mb-tag-panel').scrollIntoView({behavior:'smooth', block:'nearest'});
 
   setStepperValue('mb-count', 0);
-  document.getElementById('mb-dimension').value='';
+  document.getElementById('mb-thickness').value='';
+  document.getElementById('mb-width').value='';
+  document.getElementById('mb-length').value='';
   document.getElementById('mb-container').value='';
   document.getElementById('mb-invoice').value='';
   document.getElementById('mb-supplier').value='';
@@ -834,9 +868,20 @@ function addCutRow(){
       <label style="margin:0;">Cut size ${n}</label>
       <button type="button" class="icon-btn" title="Remove">x</button>
     </div>
-    <select class="cut-size">
-      <option value="">- Select cut size -</option>
-      ${(SETTINGS.CUTSIZE||[]).map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
+    <label>Cut Thickness (mm)</label>
+    <select class="cut-thickness">
+      <option value="">- Select -</option>
+      ${(SETTINGS.CUTTHICKNESS||[]).map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
+    </select>
+    <label>Cut Width (mm)</label>
+    <select class="cut-width">
+      <option value="">- Select -</option>
+      ${(SETTINGS.CUTWIDTH||[]).map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
+    </select>
+    <label>Cut Length (mm)</label>
+    <select class="cut-length">
+      <option value="">- Select -</option>
+      ${(SETTINGS.CUTLENGTH||[]).map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
     </select>
     <label>Cutting For</label>
     <select class="cut-for">
@@ -844,15 +889,19 @@ function addCutRow(){
       ${(SETTINGS.CUSTOMER||[]).map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
     </select>
     <label>Quantity</label>
-    <div class="stepper">
-      <button type="button" data-target="${target}" data-step="-1">-</button>
+    <div class="stepper" style="height:auto;">
+      <button type="button" data-target="${target}" data-step="-100" style="width:auto;padding:0 8px;font-size:13px;">-100</button>
+      <button type="button" data-target="${target}" data-step="-10" style="width:auto;padding:0 8px;font-size:13px;">-10</button>
+      <button type="button" data-target="${target}" data-step="-1" style="width:auto;padding:0 8px;">-1</button>
       <div class="val" id="${target}-val">0</div>
-      <button type="button" data-target="${target}" data-step="1">+</button>
+      <button type="button" data-target="${target}" data-step="1" style="width:auto;padding:0 8px;">+1</button>
+      <button type="button" data-target="${target}" data-step="10" style="width:auto;padding:0 8px;font-size:13px;">+10</button>
+      <button type="button" data-target="${target}" data-step="100" style="width:auto;padding:0 8px;font-size:13px;">+100</button>
     </div>
     <div class="stepper-presets" data-target="${target}">
-      <button type="button" data-set="5">5</button>
-      <button type="button" data-set="10">10</button>
-      <button type="button" data-set="20">20</button>
+      <button type="button" data-set="50">50</button>
+      <button type="button" data-set="100">100</button>
+      <button type="button" data-set="200">200</button>
       <button type="button" data-reset="0">Reset</button>
     </div>
     <label>Destination</label>
@@ -869,12 +918,18 @@ function addCutRow(){
 document.getElementById('cr-add-row-btn').addEventListener('click', addCutRow);
 
 function getCutRows(){
-  return Array.from(document.querySelectorAll('#cr-cut-rows .cut-row')).map(row=>({
-    size: row.querySelector('.cut-size').value,
-    forCustomer: row.querySelector('.cut-for').value,
-    qty: getStepperValue(row.dataset.target),
-    destination: row.querySelector('.cut-dest').value
-  })).filter(r=>r.qty>0);
+  return Array.from(document.querySelectorAll('#cr-cut-rows .cut-row')).map(row=>{
+    const t = row.querySelector('.cut-thickness').value;
+    const w = row.querySelector('.cut-width').value;
+    const l = row.querySelector('.cut-length').value;
+    return {
+      size: (t && w && l) ? (t+' x '+w+' x '+l+' mm') : '',
+      cutThickness: t, cutWidth: w, cutLength: l,
+      forCustomer: row.querySelector('.cut-for').value,
+      qty: getStepperValue(row.dataset.target),
+      destination: row.querySelector('.cut-dest').value
+    };
+  }).filter(r=>r.qty>0);
 }
 
 function updateTally(){
@@ -911,7 +966,7 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
   if(!currentCutBundle){ toast('Select a bundle first.', true); return; }
   const rows = getCutRows();
   if(rows.length===0){ toast('Set at least one cut size with a quantity above zero.', true); return; }
-  if(rows.some(r=>!r.size)){ toast('Each cut row needs a size selected.', true); return; }
+  if(rows.some(r=>!r.size)){ toast('Each cut row needs thickness, width, and length selected.', true); return; }
   if(rows.some(r=>r.destination==='production' && !r.forCustomer)){ toast('Select who each production cut is for.', true); return; }
   const station = document.getElementById('cr-station').value;
   if(!station){ toast('Select a cutting station.', true); return; }
