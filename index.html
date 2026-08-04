@@ -118,6 +118,7 @@
   }
   .btn:hover{background:var(--amber-bright);}
   .btn.secondary{background:transparent;border:1px solid var(--amber);color:var(--amber-bright);}
+  .type-filter-btn.active{background:var(--amber);color:#241a14;}
   .btn.danger{background:var(--stamp-red);color:var(--cream);}
   .btn:disabled{opacity:.4;cursor:not-allowed;}
   .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;}
@@ -327,13 +328,19 @@
   <section id="tab-cutting" class="tab-panel" style="display:none;">
 
     <div class="panel">
-      <h2>1. Select Master Bundle</h2>
+      <h2>1. Select Bundle</h2>
       <div class="btn-row" style="margin-bottom:14px;">
         <button class="btn" id="cr-scan-btn">Scan QR Tag</button>
         <button class="btn secondary" id="cr-refresh-btn">Refresh from Office</button>
       </div>
+      <label>Bundle Type</label>
+      <div class="btn-row" id="cr-type-filter" style="margin-bottom:4px;">
+        <button type="button" class="btn secondary type-filter-btn active" data-type="all">All</button>
+        <button type="button" class="btn secondary type-filter-btn" data-type="master">Master Only</button>
+        <button type="button" class="btn secondary type-filter-btn" data-type="child">Child Only</button>
+      </div>
       <select id="cr-bundle-select">
-        <option value="">- Select a master bundle -</option>
+        <option value="">- Select a bundle -</option>
       </select>
       <div id="cr-selected-info"></div>
     </div>
@@ -817,13 +824,24 @@ function printTagHtml(html){
 /* ================= CUTTING REPORT TAB ================= */
 let currentCutBundle = null;
 let cutRowCount = 0;
+let bundleTypeFilter = 'all';
 
 function populateBundleSelect(){
   const sel = document.getElementById('cr-bundle-select');
-  const available = DATA.bundles.filter(b => b.status==='in_stock');
-  sel.innerHTML = '<option value="">- Select a master/child bundle -</option>' +
-    available.map(b=>`<option value="${b.id}">${b.id} - ${escapeHtml(b.dimension)} (${b.pieceCount} pcs)</option>`).join('');
+  let available = DATA.bundles.filter(b => b.status==='in_stock');
+  if(bundleTypeFilter === 'master') available = available.filter(b=>b.type==='master');
+  if(bundleTypeFilter === 'child') available = available.filter(b=>b.type==='child');
+  sel.innerHTML = '<option value="">- Select a bundle -</option>' +
+    available.map(b=>`<option value="${b.id}">[${b.type==='master'?'Master':'Child'}] ${b.id} - ${escapeHtml(b.dimension)} (${b.pieceCount} pcs)</option>`).join('');
 }
+document.querySelectorAll('.type-filter-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.type-filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    bundleTypeFilter = btn.dataset.type;
+    populateBundleSelect();
+  });
+});
 
 document.getElementById('cr-bundle-select').addEventListener('change', (e)=>{
   selectBundleForCutting(e.target.value);
@@ -911,9 +929,23 @@ function addCutRow(){
       <option value="damaged">Damaged</option>
     </select>`;
   div.querySelector('.icon-btn').addEventListener('click', ()=>{ delete stepperState[target]; div.remove(); updateTally(); });
+  const destSel = div.querySelector('.cut-dest');
+  const forSel = div.querySelector('.cut-for');
+  destSel.addEventListener('change', ()=>{ applyCutForLock(destSel, forSel); });
+  applyCutForLock(destSel, forSel);
   document.getElementById('cr-cut-rows').appendChild(div);
   initStepper(target, 0);
   wireStepperButtons(div);
+}
+function applyCutForLock(destSel, forSel){
+  if(destSel.value === 'production'){
+    forSel.disabled = false;
+    forSel.style.opacity = '';
+  } else {
+    forSel.value = '';
+    forSel.disabled = true;
+    forSel.style.opacity = '0.4';
+  }
 }
 document.getElementById('cr-add-row-btn').addEventListener('click', addCutRow);
 
@@ -1048,7 +1080,7 @@ function renderCuttingHistory(){
     return;
   }
   wrap.innerHTML = `<table><thead><tr>
-      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Sync</th>
+      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Sync</th><th>Status</th>
     </tr></thead><tbody>` +
     reports.map(r=>`<tr>
       <td style="font-family:var(--mono);">${escapeHtml(r.bundleId)}</td>
@@ -1059,7 +1091,54 @@ function renderCuttingHistory(){
       <td>${r.balanceQty}${r.balanceBundleId ? ' -> '+escapeHtml(r.balanceBundleId) : ''}</td>
       <td>${r.damagedQty||0}</td>
       <td><span class="sync-chip ${r.synced?'synced':'pending'}">${r.synced?'Synced':'Pending'}</span></td>
+      <td>${r.voided
+          ? '<span class="status-pill cut">VOIDED</span>'
+          : `<button type="button" class="btn danger" style="padding:6px 12px;min-height:auto;font-size:11px;" data-void-report="${escapeHtml(r.id)}">Void</button>`}</td>
     </tr>`).join('') + '</tbody></table>';
+  wrap.querySelectorAll('[data-void-report]').forEach(btn=>{
+    btn.addEventListener('click', ()=> voidReport(btn.dataset.voidReport));
+  });
+}
+
+async function voidReport(reportId){
+  const report = DATA.reports.find(r=>r.id===reportId);
+  if(!report || report.voided) return;
+
+  if(!report.synced){
+    toast('This report has not finished syncing to the office yet - wait for it to sync before voiding.', true);
+    return;
+  }
+  if(!syncConfigured() || !navigator.onLine){
+    toast('Voiding needs a live connection to the office - try again when online.', true);
+    return;
+  }
+  if(report.balanceBundleId){
+    const bal = findBundle(report.balanceBundleId);
+    if(bal && bal.status !== 'in_stock'){
+      toast('Cannot void: '+report.balanceBundleId+' has already been used ('+bal.status+'). Void that later report first.', true);
+      return;
+    }
+  }
+  const ok = window.confirm('Void this cutting report for '+report.bundleId+'? This will put the bundle back in stock and remove any balance bundle it created. This cannot be undone.');
+  if(!ok) return;
+
+  try{
+    await apiPost({action:'voidReport', reportId: report.id, bundleId: report.bundleId, balanceBundleId: report.balanceBundleId || null});
+    report.voided = true;
+    const bundle = findBundle(report.bundleId);
+    if(bundle) bundle.status = 'in_stock';
+    if(report.balanceBundleId){
+      DATA.bundles = DATA.bundles.filter(b=>b.id !== report.balanceBundleId);
+    }
+    saveData(DATA);
+    renderCuttingHistory();
+    renderBundleList();
+    populateBundleSelect();
+    renderLedger();
+    toast('Report voided - '+report.bundleId+' is back in stock.');
+  }catch(err){
+    toast('Could not void report: '+err.message, true);
+  }
 }
 
 /* ================= QR SCANNING ================= */
