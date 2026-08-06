@@ -737,7 +737,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.classList.add('active');
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='bundles') renderBundleList();
-    if(btn.dataset.tab==='cutting'){ populateBundleSelect(); renderCuttingHistory(); tryFetchBundlesFromOffice(); }
+    if(btn.dataset.tab==='cutting'){ populateBundleSelect(); renderCuttingHistory(); tryFetchBundlesFromOffice(); tryFetchReportsFromOffice(); }
     if(btn.dataset.tab==='ledger') renderLedger();
     if(btn.dataset.tab==='sync'){ renderSyncTab(); }
   });
@@ -1023,23 +1023,36 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
 
   currentCutBundle.status = 'cut';
 
-  let balanceBundle = null;
-  if(balanceQty > 0){
-    balanceBundle = {
+  // Each distinct size going to "balance" gets its own properly-dimensioned
+  // child bundle, rather than lumping every leftover size into one "mixed" bundle.
+  const balanceBundles = [];
+  const groups = {};
+  rows.filter(r=>r.destination==='balance').forEach(r=>{
+    const key = r.cutThickness+'|'+r.cutWidth+'|'+r.cutLength;
+    if(!groups[key]) groups[key] = { thickness:r.cutThickness, width:r.cutWidth, length:r.cutLength, qty:0, rows:[] };
+    groups[key].qty += r.qty;
+    groups[key].rows.push(r);
+  });
+  Object.values(groups).forEach(g=>{
+    const child = {
       id: genChildId(currentCutBundle.id),
       type: 'child',
       parentId: currentCutBundle.id,
-      dimension: 'Mixed offcuts (see cutting report '+report.id+')',
-      pieceCount: balanceQty,
+      dimension: g.thickness+' x '+g.width+' x '+g.length+' mm',
+      thickness: g.thickness, width: g.width, length: g.length,
+      pieceCount: g.qty,
       containerRef: currentCutBundle.containerRef,
       notes: 'Balance from cutting report for '+currentCutBundle.id,
       status: 'in_stock',
       createdAt: todayISO(),
+      enteredBy: SESSION_PERSON,
       synced: false
     };
-    DATA.bundles.push(balanceBundle);
-    report.balanceBundleId = balanceBundle.id;
-  }
+    DATA.bundles.push(child);
+    balanceBundles.push(child);
+    g.rows.forEach(r=>{ r.balanceBundleId = child.id; });
+  });
+  report.balanceBundleIds = balanceBundles.map(b=>b.id);
 
   DATA.reports.push(report);
   saveData(DATA);
@@ -1050,27 +1063,29 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
   document.getElementById('cr-bundle-select').value='';
   document.getElementById('cr-selected-info').innerHTML='';
 
-  if(balanceBundle){
-    document.getElementById('cr-balance-panel').style.display='block';
-    document.getElementById('cr-balance-note').textContent =
-      balanceBundle.id+' created automatically to hold the '+balanceQty+' leftover piece(s), linked back to '+currentCutBundle.id+'. Print its tag and attach it to the physical offcut bundle before it goes back into stock.';
-    document.getElementById('cr-balance-tag').innerHTML = bundleTagHtml(balanceBundle);
-    renderTagQR(balanceBundle);
-  } else {
-    document.getElementById('cr-balance-panel').style.display='none';
-  }
+  renderBalanceBundlePanel(balanceBundles, currentCutBundle.id);
 
   currentCutBundle = null;
   populateBundleSelect();
   renderCuttingHistory();
 
-  await trySyncReport(report, balanceBundle);
+  await trySyncReport(report, balanceBundles);
   renderCuttingHistory();
-  if(balanceBundle){
-    document.getElementById('cr-balance-tag').innerHTML = bundleTagHtml(balanceBundle);
-    renderTagQR(balanceBundle);
-  }
+  renderBalanceBundlePanel(balanceBundles, report.bundleId);
 });
+
+function renderBalanceBundlePanel(balanceBundles, parentBundleId){
+  const panel = document.getElementById('cr-balance-panel');
+  if(!balanceBundles || balanceBundles.length===0){
+    panel.style.display='none';
+    return;
+  }
+  panel.style.display='block';
+  document.getElementById('cr-balance-note').textContent =
+    balanceBundles.length+' balance bundle(s) created automatically, linked back to '+parentBundleId+'. Print each tag and attach it to the matching physical offcut bundle before it goes back into stock.';
+  document.getElementById('cr-balance-tag').innerHTML = balanceBundles.map(b=>`<div style="margin-bottom:12px;">${bundleTagHtml(b)}</div>`).join('');
+  balanceBundles.forEach(renderTagQR);
+}
 
 function renderCuttingHistory(){
   const wrap = document.getElementById('cr-history');
@@ -1088,7 +1103,7 @@ function renderCuttingHistory(){
       <td>${fmtDate(r.date)}</td>
       <td>${r.totalCut} / ${r.originalCount}</td>
       <td>${r.productionQty}</td>
-      <td>${r.balanceQty}${r.balanceBundleId ? ' -> '+escapeHtml(r.balanceBundleId) : ''}</td>
+      <td>${r.balanceQty}${(r.balanceBundleIds&&r.balanceBundleIds.length) ? ' -> '+r.balanceBundleIds.map(escapeHtml).join(', ') : ''}</td>
       <td>${r.damagedQty||0}</td>
       <td><span class="sync-chip ${r.synced?'synced':'pending'}">${r.synced?'Synced':'Pending'}</span></td>
       <td>${r.voided
@@ -1112,23 +1127,24 @@ async function voidReport(reportId){
     toast('Voiding needs a live connection to the office - try again when online.', true);
     return;
   }
-  if(report.balanceBundleId){
-    const bal = findBundle(report.balanceBundleId);
+  const balanceIds = report.balanceBundleIds || (report.balanceBundleId ? [report.balanceBundleId] : []);
+  for(const bid of balanceIds){
+    const bal = findBundle(bid);
     if(bal && bal.status !== 'in_stock'){
-      toast('Cannot void: '+report.balanceBundleId+' has already been used ('+bal.status+'). Void that later report first.', true);
+      toast('Cannot void: '+bid+' has already been used ('+bal.status+'). Void that later report first.', true);
       return;
     }
   }
-  const ok = window.confirm('Void this cutting report for '+report.bundleId+'? This will put the bundle back in stock and remove any balance bundle it created. This cannot be undone.');
+  const ok = window.confirm('Void this cutting report for '+report.bundleId+'? This will put the bundle back in stock and remove any balance bundle(s) it created. This cannot be undone.');
   if(!ok) return;
 
   try{
-    await apiPost({action:'voidReport', reportId: report.id, bundleId: report.bundleId, balanceBundleId: report.balanceBundleId || null});
+    await apiPost({action:'voidReport', reportId: report.id, bundleId: report.bundleId, balanceBundleIds: balanceIds});
     report.voided = true;
     const bundle = findBundle(report.bundleId);
     if(bundle) bundle.status = 'in_stock';
-    if(report.balanceBundleId){
-      DATA.bundles = DATA.bundles.filter(b=>b.id !== report.balanceBundleId);
+    if(balanceIds.length){
+      DATA.bundles = DATA.bundles.filter(b=>!balanceIds.includes(b.id));
     }
     saveData(DATA);
     renderCuttingHistory();
@@ -1203,8 +1219,9 @@ function closeScanModal(){
   if(scanStream){ scanStream.getTracks().forEach(t=>t.stop()); scanStream=null; }
 }
 document.getElementById('cr-refresh-btn').addEventListener('click', async ()=>{
-  toast('Refreshing bundles from office...');
+  toast('Refreshing from office...');
   await tryFetchBundlesFromOffice(true);
+  await tryFetchReportsFromOffice(true);
 });
 
 /* ================= LEDGER TAB ================= */
@@ -1266,7 +1283,7 @@ function showBundleDetail(id){
     const sep = i < chain.length-1 ? '<span class="sep">-></span>' : '';
     return `<span>${i===chain.length-1?'<b>'+escapeHtml(x.id)+'</b>':escapeHtml(x.id)}</span>${sep}`;
   }).join(' ');
-  const relatedReports = DATA.reports.filter(r=> r.bundleId===id || r.balanceBundleId===id);
+  const relatedReports = DATA.reports.filter(r=> r.bundleId===id || r.balanceBundleId===id || (r.balanceBundleIds && r.balanceBundleIds.includes(id)));
   const childBundles = DATA.bundles.filter(c=>c.parentId===id);
 
   document.getElementById('lg-detail').innerHTML = `
@@ -1359,21 +1376,22 @@ async function trySyncBundle(b){
     return false;
   }
 }
-async function trySyncReport(report, balanceBundle){
+async function trySyncReport(report, balanceBundles){
+  balanceBundles = balanceBundles || [];
   if(!syncConfigured() || !navigator.onLine){
-    queueAdd({type:'report', payload:{report, balanceBundle}});
+    queueAdd({type:'report', payload:{report, balanceBundles}});
     updateSyncBadge();
     return false;
   }
   try{
-    await apiPost({action:'createCuttingReport', report, balanceBundle});
+    await apiPost({action:'createCuttingReport', report, balanceBundles});
     report.synced = true;
-    if(balanceBundle) balanceBundle.synced = true;
+    balanceBundles.forEach(b=>{ b.synced = true; });
     saveData(DATA);
     updateSyncBadge();
     return true;
   }catch(err){
-    queueAdd({type:'report', payload:{report, balanceBundle}});
+    queueAdd({type:'report', payload:{report, balanceBundles}});
     updateSyncBadge();
     return false;
   }
@@ -1395,13 +1413,14 @@ async function processQueue(){
         const local = findBundle(item.payload.id);
         if(local) local.synced = true;
       } else if(item.type==='report'){
-        await apiPost({action:'createCuttingReport', report:item.payload.report, balanceBundle:item.payload.balanceBundle});
+        const balanceBundles = item.payload.balanceBundles || (item.payload.balanceBundle ? [item.payload.balanceBundle] : []);
+        await apiPost({action:'createCuttingReport', report:item.payload.report, balanceBundles});
         const localReport = DATA.reports.find(r=>r.id===item.payload.report.id);
         if(localReport) localReport.synced = true;
-        if(item.payload.balanceBundle){
-          const localBal = findBundle(item.payload.balanceBundle.id);
+        balanceBundles.forEach(bb=>{
+          const localBal = findBundle(bb.id);
           if(localBal) localBal.synced = true;
-        }
+        });
       }
     }catch(err){
       remaining.push(item);
@@ -1461,6 +1480,55 @@ async function tryFetchBundlesFromOffice(manual){
       toast(removedIds.length
         ? 'Bundle list refreshed - '+removedIds.length+' removed bundle(s) cleared from this iPad.'
         : 'Bundle list refreshed from office.');
+    }
+  }catch(err){
+    if(manual) toast('Could not reach office: '+err.message, true);
+  }
+}
+
+async function tryFetchReportsFromOffice(manual){
+  if(!syncConfigured() || !navigator.onLine){
+    if(manual) toast('Not connected to office right now.', true);
+    return;
+  }
+  try{
+    const data = await apiGet('reports');
+    const remoteReports = data.reports || [];
+    const remoteById = {};
+    remoteReports.forEach(r=>{ remoteById[r.id] = r; });
+
+    // A report that was previously confirmed synced but no longer has any rows
+    // in CuttingReportLines has been deleted directly in the Sheet - remove it
+    // here too. Note: a manual sheet deletion like this does NOT automatically
+    // revert the bundle's status or remove its balance bundles from
+    // MasterBundles - only the Void button on the iPad does that cleanly. This
+    // just keeps the iPad's history list matching what's actually in the Sheet.
+    const removedIds = DATA.reports.filter(r => r.synced && !remoteById[r.id]).map(r=>r.id);
+    if(removedIds.length){
+      DATA.reports = DATA.reports.filter(r => !removedIds.includes(r.id));
+    }
+
+    // Pick up voids (or edits) that happened from another device or directly
+    // in the Sheet, and bring in any report created on a different iPad.
+    let addedCount = 0;
+    remoteReports.forEach(remote=>{
+      const local = DATA.reports.find(r=>r.id===remote.id);
+      if(local){
+        if(remote.voided && !local.voided) local.voided = true;
+      } else {
+        const srcBundle = findBundle(remote.bundleId);
+        DATA.reports.push({...remote, originalCount: (srcBundle ? srcBundle.pieceCount : remote.totalCut), cuts: [], synced:true});
+        addedCount++;
+      }
+    });
+
+    saveData(DATA);
+    renderCuttingHistory();
+    if(manual){
+      const parts = [];
+      if(removedIds.length) parts.push(removedIds.length+' removed');
+      if(addedCount) parts.push(addedCount+' added');
+      toast(parts.length ? 'Report history refreshed - '+parts.join(', ')+'.' : 'Report history refreshed from office.');
     }
   }catch(err){
     if(manual) toast('Could not reach office: '+err.message, true);
@@ -1545,6 +1613,7 @@ updateSessionDisplay();
 if(syncConfigured() && navigator.onLine){
   tryFetchSettingsFromOffice(true);
   tryFetchBundlesFromOffice(false);
+  tryFetchReportsFromOffice(false);
 }
 </script>
 </body>
