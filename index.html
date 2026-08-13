@@ -304,6 +304,9 @@
       <label>Supplier</label>
       <select id="mb-supplier"><option value="">- Select -</option></select>
 
+      <label>Supplier's Bundle Number (optional)</label>
+      <input type="text" id="mb-notes" placeholder="Number the supplier marked on this bundle">
+
       <div class="btn-row">
         <button class="btn" id="mb-create-btn">Generate Bundle &amp; QR Tag</button>
       </div>
@@ -617,6 +620,7 @@ function bundleTagHtml(b){
         <div class="row">Pieces: <b>${escapeHtml(b.pieceCount)}</b></div>
         <div class="row">Container: ${escapeHtml(b.containerRef||'-')} - Invoice: ${escapeHtml(b.invoiceNumber||'-')}</div>
         <div class="row">Supplier: <b>${escapeHtml(b.supplier||'-')}</b></div>
+        ${b.notes ? `<div class="row">Supplier's Bundle No: <b>${escapeHtml(b.notes)}</b></div>` : ''}
         ${lineage}
         <div class="row" style="opacity:.65;">Created ${fmtDate(b.createdAt)}</div>
       </div>
@@ -764,6 +768,7 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   const containerRef = document.getElementById('mb-container').value;
   const invoiceNumber = document.getElementById('mb-invoice').value;
   const supplier = document.getElementById('mb-supplier').value;
+  const supplierBundleNo = document.getElementById('mb-notes').value.trim();
 
   if(!thickness || !width || !length || !count || count<1 || !containerRef || !invoiceNumber || !supplier){
     toast('Select thickness, width, length, container number, invoice number, supplier, and set a piece count above zero.', true);
@@ -776,7 +781,7 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
     parentId: null,
     dimension, thickness, width, length,
     pieceCount: count,
-    containerRef, invoiceNumber, supplier, notes:'',
+    containerRef, invoiceNumber, supplier, notes: supplierBundleNo,
     status: 'in_stock',
     createdAt: todayISO(),
     enteredBy: SESSION_PERSON,
@@ -797,6 +802,7 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   document.getElementById('mb-container').value='';
   document.getElementById('mb-invoice').value='';
   document.getElementById('mb-supplier').value='';
+  document.getElementById('mb-notes').value='';
 
   renderBundleList();
   toast('Master bundle '+b.id+' created.');
