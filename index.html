@@ -354,8 +354,12 @@
       <label>Cutting Station</label>
       <select id="cr-station"><option value="">- Select station -</option></select>
 
-      <label>Date</label>
-      <input type="date" id="cr-date">
+      <label>Date (DD/MM/YYYY)</label>
+      <div class="grid2" style="grid-template-columns:1fr 1.4fr 1fr;gap:8px;">
+        <select id="cr-date-day"></select>
+        <select id="cr-date-month"></select>
+        <select id="cr-date-year"></select>
+      </div>
 
       <label style="margin-top:8px;">Cut Pieces</label>
       <div id="cr-cut-rows"></div>
@@ -707,6 +711,33 @@ function wireStepperButtons(container){
   });
 }
 initStepper('mb-count', 0);
+
+/* ================= Date selectors (DD/MM/YYYY, independent of device locale) ================= */
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function populateDateSelectors(){
+  const daySel = document.getElementById('cr-date-day');
+  const monthSel = document.getElementById('cr-date-month');
+  const yearSel = document.getElementById('cr-date-year');
+  daySel.innerHTML = Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${String(d).padStart(2,'0')}">${String(d).padStart(2,'0')}</option>`).join('');
+  monthSel.innerHTML = MONTH_NAMES.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('');
+  const thisYear = new Date().getFullYear();
+  const years = [thisYear-1, thisYear, thisYear+1];
+  yearSel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+}
+function setDateSelectorsToToday(){
+  const now = new Date();
+  document.getElementById('cr-date-day').value = String(now.getDate()).padStart(2,'0');
+  document.getElementById('cr-date-month').value = String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('cr-date-year').value = String(now.getFullYear());
+}
+function getDateFromSelectors(){
+  const d = document.getElementById('cr-date-day').value;
+  const m = document.getElementById('cr-date-month').value;
+  const y = document.getElementById('cr-date-year').value;
+  if(!d || !m || !y) return todayISO();
+  return y+'-'+m+'-'+d;
+}
+populateDateSelectors();
 wireStepperButtons(document);
 
 /* ================= Session (data entry person) ================= */
@@ -872,7 +903,7 @@ function selectBundleForCutting(id){
   document.getElementById('cr-selected-info').innerHTML = `<div style="margin-top:12px;">${bundleTagHtml(b)}</div>`;
   renderTagQR(b);
   document.getElementById('cr-form-panel').style.display='block';
-  document.getElementById('cr-date').value = todayISO();
+  setDateSelectorsToToday();
   document.getElementById('cr-station').value='';
   document.getElementById('cr-cut-rows').innerHTML='';
   cutRowCount = 0;
@@ -1008,7 +1039,7 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
   if(rows.some(r=>r.destination==='production' && !r.forCustomer)){ toast('Select who each production cut is for.', true); return; }
   const station = document.getElementById('cr-station').value;
   if(!station){ toast('Select a cutting station.', true); return; }
-  const date = document.getElementById('cr-date').value || todayISO();
+  const date = getDateFromSelectors();
 
   const totalCut = rows.reduce((s,r)=>s+r.qty,0);
   const balanceQty = rows.filter(r=>r.destination==='balance').reduce((s,r)=>s+r.qty,0);
