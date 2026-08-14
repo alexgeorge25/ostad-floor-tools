@@ -202,6 +202,9 @@
   #scanModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:50;align-items:center;justify-content:center;padding:16px;}
   #scanModal.open{display:flex;}
   #scanModal .box{background:var(--wood-panel);border:1px solid var(--line);border-radius:4px;padding:16px;max-width:420px;width:100%;}
+  #editBundleModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:50;align-items:center;justify-content:center;padding:16px;overflow-y:auto;}
+  #editBundleModal.open{display:flex;}
+  #editBundleModal .box{background:var(--wood-panel);border:1px solid var(--line);border-radius:4px;padding:16px;max-width:420px;width:100%;margin:auto;}
   #scanVideo{width:100%;border-radius:3px;background:#000;}
   .scan-msg{font-size:12.5px;color:var(--cream-dim);margin-top:10px;font-family:var(--mono);min-height:18px;}
 
@@ -472,6 +475,32 @@
     <div class="scan-msg" id="scanMsg">Requesting camera...</div>
     <div class="btn-row">
       <button class="btn secondary" id="scanCloseBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="editBundleModal">
+  <div class="box">
+    <h2 style="font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber-bright);margin:0 0 12px;">Edit Bundle <span id="editBundleIdLabel"></span></h2>
+
+    <label>Thickness (mm)</label>
+    <select id="eb-thickness"><option value="">- Select -</option></select>
+    <label>Width (mm)</label>
+    <select id="eb-width"><option value="">- Select -</option></select>
+    <label>Length (mm)</label>
+    <select id="eb-length"><option value="">- Select -</option></select>
+    <label>Container Number</label>
+    <select id="eb-container"><option value="">- Select -</option></select>
+    <label>Invoice Number</label>
+    <select id="eb-invoice"><option value="">- Select -</option></select>
+    <label>Supplier</label>
+    <select id="eb-supplier"><option value="">- Select -</option></select>
+    <label>Supplier's Bundle Number (optional)</label>
+    <input type="text" id="eb-notes" placeholder="Number the supplier marked on this bundle">
+
+    <div class="btn-row">
+      <button class="btn" id="editBundleSaveBtn">Save Correction</button>
+      <button class="btn secondary" id="editBundleCancelBtn">Cancel</button>
     </div>
   </div>
 </div>
@@ -786,8 +815,89 @@ function renderBundleList(){
     wrap.innerHTML = '<div class="empty-state">No master bundles yet. Create one above.</div>';
     return;
   }
-  wrap.innerHTML = masters.map(b=>`<div style="margin-bottom:12px;">${bundleTagHtml(b)}</div>`).join('');
+  wrap.innerHTML = masters.map(b=>`<div style="margin-bottom:12px;">
+    ${bundleTagHtml(b)}
+    <div class="btn-row" style="margin-top:6px;">
+      <button type="button" class="btn secondary" style="padding:8px 14px;min-height:auto;font-size:12px;" data-edit-bundle="${escapeHtml(b.id)}">Edit</button>
+    </div>
+  </div>`).join('');
   masters.forEach(renderTagQR);
+  wrap.querySelectorAll('[data-edit-bundle]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openEditBundleModal(btn.dataset.editBundle));
+  });
+}
+
+/* ================= EDIT BUNDLE (correcting mistakes) ================= */
+function openEditBundleModal(bundleId){
+  const b = findBundle(bundleId);
+  if(!b){ toast('Bundle not found.', true); return; }
+  document.getElementById('editBundleIdLabel').textContent = b.id;
+  fillSelect(document.getElementById('eb-thickness'), SETTINGS.THICKNESS, '- Select -');
+  fillSelect(document.getElementById('eb-width'), SETTINGS.WIDTH, '- Select -');
+  fillSelect(document.getElementById('eb-length'), SETTINGS.LENGTH, '- Select -');
+  fillSelect(document.getElementById('eb-container'), SETTINGS.CONTAINER, '- Select -');
+  fillSelect(document.getElementById('eb-invoice'), SETTINGS.INVOICE, '- Select -');
+  fillSelect(document.getElementById('eb-supplier'), SETTINGS.SUPPLIER, '- Select -');
+  document.getElementById('eb-thickness').value = b.thickness || '';
+  document.getElementById('eb-width').value = b.width || '';
+  document.getElementById('eb-length').value = b.length || '';
+  document.getElementById('eb-container').value = b.containerRef || '';
+  document.getElementById('eb-invoice').value = b.invoiceNumber || '';
+  document.getElementById('eb-supplier').value = b.supplier || '';
+  document.getElementById('eb-notes').value = b.notes || '';
+  document.getElementById('editBundleModal').dataset.bundleId = bundleId;
+  document.getElementById('editBundleModal').classList.add('open');
+}
+document.getElementById('editBundleCancelBtn').addEventListener('click', ()=>{
+  document.getElementById('editBundleModal').classList.remove('open');
+});
+document.getElementById('editBundleSaveBtn').addEventListener('click', async ()=>{
+  const bundleId = document.getElementById('editBundleModal').dataset.bundleId;
+  const b = findBundle(bundleId);
+  if(!b) return;
+  const thickness = document.getElementById('eb-thickness').value;
+  const width = document.getElementById('eb-width').value;
+  const length = document.getElementById('eb-length').value;
+  const containerRef = document.getElementById('eb-container').value;
+  const invoiceNumber = document.getElementById('eb-invoice').value;
+  const supplier = document.getElementById('eb-supplier').value;
+  const notes = document.getElementById('eb-notes').value.trim();
+  if(!thickness || !width || !length || !containerRef || !invoiceNumber || !supplier){
+    toast('Select thickness, width, length, container number, invoice number, and supplier.', true);
+    return;
+  }
+  b.thickness = thickness; b.width = width; b.length = length;
+  b.dimension = thickness+' x '+width+' x '+length+' mm';
+  b.containerRef = containerRef; b.invoiceNumber = invoiceNumber; b.supplier = supplier; b.notes = notes;
+  b.synced = false;
+  saveData(DATA);
+  document.getElementById('editBundleModal').classList.remove('open');
+  renderBundleList();
+  populateBundleSelect();
+  renderLedger();
+  toast('Correction saved for '+b.id+'.');
+
+  await trySyncEditBundle(b);
+  renderBundleList();
+  renderLedger();
+});
+async function trySyncEditBundle(b){
+  if(!syncConfigured() || !navigator.onLine){
+    queueAdd({type:'editBundle', payload:b});
+    updateSyncBadge();
+    return false;
+  }
+  try{
+    await apiPost({action:'editBundle', bundle:b});
+    b.synced = true;
+    saveData(DATA);
+    updateSyncBadge();
+    return true;
+  }catch(err){
+    queueAdd({type:'editBundle', payload:b});
+    updateSyncBadge();
+    return false;
+  }
 }
 
 document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
@@ -1325,12 +1435,16 @@ function showBundleDetail(id){
 
   document.getElementById('lg-detail').innerHTML = `
     ${bundleTagHtml(b)}
+    ${b.type==='master' ? `<div class="btn-row" style="margin-top:6px;"><button type="button" class="btn secondary" id="lg-edit-bundle-btn">Edit</button></div>` : ''}
     <div class="section-note" style="margin-top:14px;">
       <div class="lineage">Lineage: ${lineageHtml || escapeHtml(b.id)}</div>
     </div>
     ${childBundles.length ? `<div style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--cream-dim);">Child bundles: ${childBundles.map(c=>c.id).join(', ')}</div>` : ''}
     ${relatedReports.length ? `<div style="margin-top:14px;"><table><thead><tr><th>Report</th><th>Station</th><th>Date</th><th>Cut/Original</th></tr></thead><tbody>${relatedReports.map(r=>`<tr><td style="font-family:var(--mono);">${escapeHtml(r.id)}</td><td>${escapeHtml(r.station)}</td><td>${fmtDate(r.date)}</td><td>${r.totalCut}/${r.originalCount}</td></tr>`).join('')}</tbody></table></div>` : ''}
   `;
+  if(b.type==='master'){
+    document.getElementById('lg-edit-bundle-btn').addEventListener('click', ()=> openEditBundleModal(b.id));
+  }
   renderTagQR(b);
   panel.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
@@ -1458,6 +1572,10 @@ async function processQueue(){
           const localBal = findBundle(bb.id);
           if(localBal) localBal.synced = true;
         });
+      } else if(item.type==='editBundle'){
+        await apiPost({action:'editBundle', bundle:item.payload});
+        const local = findBundle(item.payload.id);
+        if(local) local.synced = true;
       }
     }catch(err){
       remaining.push(item);
