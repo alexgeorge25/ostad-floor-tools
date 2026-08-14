@@ -498,6 +498,22 @@
     <label>Supplier's Bundle Number (optional)</label>
     <input type="text" id="eb-notes" placeholder="Number the supplier marked on this bundle">
 
+    <div id="eb-count-section" style="display:none;">
+      <label>Piece Count</label>
+      <div class="stepper" style="height:auto;">
+        <button type="button" data-target="eb-count" data-step="-100" style="width:auto;padding:0 8px;font-size:13px;">-100</button>
+        <button type="button" data-target="eb-count" data-step="-10" style="width:auto;padding:0 8px;font-size:13px;">-10</button>
+        <button type="button" data-target="eb-count" data-step="-1" style="width:auto;padding:0 8px;">-1</button>
+        <div class="val" id="eb-count-val">0</div>
+        <button type="button" data-target="eb-count" data-step="1" style="width:auto;padding:0 8px;">+1</button>
+        <button type="button" data-target="eb-count" data-step="10" style="width:auto;padding:0 8px;font-size:13px;">+10</button>
+        <button type="button" data-target="eb-count" data-step="100" style="width:auto;padding:0 8px;font-size:13px;">+100</button>
+      </div>
+    </div>
+    <div id="eb-count-locked-note" class="section-note" style="display:none;">
+      Piece count can't be changed after this bundle has been through a cutting report - the original count is already used in that report's tally. Void the cutting report first if the count needs correcting.
+    </div>
+
     <div class="btn-row">
       <button class="btn" id="editBundleSaveBtn">Save Correction</button>
       <button class="btn secondary" id="editBundleCancelBtn">Cancel</button>
@@ -845,12 +861,19 @@ function openEditBundleModal(bundleId){
   document.getElementById('eb-invoice').value = b.invoiceNumber || '';
   document.getElementById('eb-supplier').value = b.supplier || '';
   document.getElementById('eb-notes').value = b.notes || '';
+  const countEditable = (b.status === 'in_stock');
+  document.getElementById('eb-count-section').style.display = countEditable ? 'block' : 'none';
+  document.getElementById('eb-count-locked-note').style.display = countEditable ? 'none' : 'block';
+  if(countEditable){
+    initStepper('eb-count', b.pieceCount || 0);
+  }
   document.getElementById('editBundleModal').dataset.bundleId = bundleId;
   document.getElementById('editBundleModal').classList.add('open');
 }
 document.getElementById('editBundleCancelBtn').addEventListener('click', ()=>{
   document.getElementById('editBundleModal').classList.remove('open');
 });
+wireStepperButtons(document.getElementById('editBundleModal'));
 document.getElementById('editBundleSaveBtn').addEventListener('click', async ()=>{
   const bundleId = document.getElementById('editBundleModal').dataset.bundleId;
   const b = findBundle(bundleId);
@@ -865,6 +888,14 @@ document.getElementById('editBundleSaveBtn').addEventListener('click', async ()=
   if(!thickness || !width || !length || !containerRef || !invoiceNumber || !supplier){
     toast('Select thickness, width, length, container number, invoice number, and supplier.', true);
     return;
+  }
+  if(b.status === 'in_stock'){
+    const newCount = getStepperValue('eb-count');
+    if(!newCount || newCount < 1){
+      toast('Piece count must be above zero.', true);
+      return;
+    }
+    b.pieceCount = newCount;
   }
   b.thickness = thickness; b.width = width; b.length = length;
   b.dimension = thickness+' x '+width+' x '+length+' mm';
