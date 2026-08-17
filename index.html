@@ -232,6 +232,15 @@
     #printArea, #printArea *{visibility:visible;}
     #printArea{position:absolute;top:0;left:0;width:100%;}
     .tag{border:2px solid #000;}
+    .print-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+    .print-grid .tag{
+      break-inside:avoid;
+      page-break-inside:avoid;
+    }
   }
 </style>
 </head>
@@ -325,6 +334,11 @@
 
     <div class="panel">
       <h2>Master Bundles</h2>
+      <div class="btn-row" style="margin-bottom:12px;">
+        <button type="button" class="btn secondary" id="mb-select-all-btn">Select All</button>
+        <button type="button" class="btn secondary" id="mb-select-none-btn">Select None</button>
+        <button type="button" class="btn" id="mb-print-selected-btn">Print Selected Tags (<span id="mb-selected-count">0</span>)</button>
+      </div>
       <div id="mb-list"></div>
     </div>
 
@@ -655,8 +669,12 @@ function drawQR(containerEl, text){
 }
 
 /* ================= Tag rendering ================= */
-function bundleTagHtml(b){
-  const qrId = 'qr-'+b.id.replace(/[^a-zA-Z0-9]/g,'');
+function tagQrId(b, prefix){
+  const clean = b.id.replace(/[^a-zA-Z0-9]/g,'');
+  return prefix ? ('qr-'+prefix+'-'+clean) : ('qr-'+clean);
+}
+function bundleTagHtml(b, prefix){
+  const qrId = tagQrId(b, prefix);
   const lineage = b.parentId ? `<div class="row">From: <b>${escapeHtml(b.parentId)}</b></div>` : '';
   const syncChip = `<span class="sync-chip ${b.synced?'synced':'pending'}">${b.synced?'Synced':'Pending sync'}</span>`;
   return `
@@ -675,8 +693,8 @@ function bundleTagHtml(b){
       </div>
     </div>`;
 }
-function renderTagQR(b){
-  const qrId = 'qr-'+b.id.replace(/[^a-zA-Z0-9]/g,'');
+function renderTagQR(b, prefix){
+  const qrId = tagQrId(b, prefix);
   const el = document.getElementById(qrId);
   if(el) drawQR(el, 'OSTAD-BUNDLE:'+b.id);
 }
@@ -824,24 +842,53 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 });
 
 /* ================= MASTER BUNDLES TAB ================= */
+let selectedForPrint = new Set();
 function renderBundleList(){
   const wrap = document.getElementById('mb-list');
   const masters = DATA.bundles.filter(b=>b.type==='master').sort((a,b)=> b.createdAt.localeCompare(a.createdAt));
   if(masters.length===0){
     wrap.innerHTML = '<div class="empty-state">No master bundles yet. Create one above.</div>';
+    updateSelectedPrintCount();
     return;
   }
-  wrap.innerHTML = masters.map(b=>`<div style="margin-bottom:12px;">
-    ${bundleTagHtml(b)}
-    <div class="btn-row" style="margin-top:6px;">
-      <button type="button" class="btn secondary" style="padding:8px 14px;min-height:auto;font-size:12px;" data-edit-bundle="${escapeHtml(b.id)}">Edit</button>
+  wrap.innerHTML = masters.map(b=>`<div style="margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;">
+    <input type="checkbox" class="mb-select-checkbox" data-bundle-id="${escapeHtml(b.id)}" style="width:22px;height:22px;margin-top:14px;flex-shrink:0;" ${selectedForPrint.has(b.id)?'checked':''}>
+    <div style="flex:1;min-width:0;">
+      ${bundleTagHtml(b)}
+      <div class="btn-row" style="margin-top:6px;">
+        <button type="button" class="btn secondary" style="padding:8px 14px;min-height:auto;font-size:12px;" data-edit-bundle="${escapeHtml(b.id)}">Edit</button>
+      </div>
     </div>
   </div>`).join('');
-  masters.forEach(renderTagQR);
+  masters.forEach(b=>renderTagQR(b));
   wrap.querySelectorAll('[data-edit-bundle]').forEach(btn=>{
     btn.addEventListener('click', ()=> openEditBundleModal(btn.dataset.editBundle));
   });
+  wrap.querySelectorAll('.mb-select-checkbox').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      if(cb.checked) selectedForPrint.add(cb.dataset.bundleId);
+      else selectedForPrint.delete(cb.dataset.bundleId);
+      updateSelectedPrintCount();
+    });
+  });
+  updateSelectedPrintCount();
 }
+function updateSelectedPrintCount(){
+  document.getElementById('mb-selected-count').textContent = selectedForPrint.size;
+}
+document.getElementById('mb-select-all-btn').addEventListener('click', ()=>{
+  DATA.bundles.filter(b=>b.type==='master').forEach(b=>selectedForPrint.add(b.id));
+  renderBundleList();
+});
+document.getElementById('mb-select-none-btn').addEventListener('click', ()=>{
+  selectedForPrint.clear();
+  renderBundleList();
+});
+document.getElementById('mb-print-selected-btn').addEventListener('click', ()=>{
+  const bundles = Array.from(selectedForPrint).map(id=>findBundle(id)).filter(Boolean);
+  if(bundles.length===0){ toast('Select at least one bundle to print.', true); return; }
+  printBundles(bundles);
+});
 
 /* ================= EDIT BUNDLE (correcting mistakes) ================= */
 function openEditBundleModal(bundleId){
@@ -961,6 +1008,7 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   };
   DATA.bundles.push(b);
   saveData(DATA);
+  lastCreatedBundle = b;
 
   document.getElementById('mb-tag-panel').style.display='block';
   document.getElementById('mb-new-tag').innerHTML = bundleTagHtml(b);
@@ -985,18 +1033,28 @@ document.getElementById('mb-create-btn').addEventListener('click', async ()=>{
   renderBundleList();
 });
 
+let lastCreatedBundle = null;
+let lastBalanceBundles = [];
+
 document.getElementById('mb-print-btn').addEventListener('click', ()=>{
-  printTagHtml(document.getElementById('mb-new-tag').innerHTML);
+  if(lastCreatedBundle) printBundles([lastCreatedBundle]);
 });
 document.getElementById('cr-balance-print-btn').addEventListener('click', ()=>{
-  printTagHtml(document.getElementById('cr-balance-tag').innerHTML);
+  if(lastBalanceBundles.length) printBundles(lastBalanceBundles);
 });
-function printTagHtml(html){
+
+function printBundles(bundles){
+  if(!bundles || bundles.length===0){ toast('Nothing selected to print.', true); return; }
   const area = document.getElementById('printArea');
-  area.innerHTML = html;
+  area.innerHTML = '<div class="print-grid">' + bundles.map((b,i)=> bundleTagHtml(b, 'p'+i)).join('') + '</div>';
   area.style.display='block';
-  window.print();
-  setTimeout(()=>{ area.style.display='none'; }, 300);
+  // QR codes are drawn onto <canvas> by JS and don't survive an innerHTML copy,
+  // so they have to be redrawn fresh here, into these specific print-area elements.
+  bundles.forEach((b,i)=> renderTagQR(b, 'p'+i));
+  setTimeout(()=>{
+    window.print();
+    setTimeout(()=>{ area.style.display='none'; area.innerHTML=''; }, 300);
+  }, 50); // brief delay so the canvases finish painting before the print dialog opens
 }
 
 /* ================= CUTTING REPORT TAB ================= */
@@ -1254,6 +1312,7 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
 
 function renderBalanceBundlePanel(balanceBundles, parentBundleId){
   const panel = document.getElementById('cr-balance-panel');
+  lastBalanceBundles = balanceBundles || [];
   if(!balanceBundles || balanceBundles.length===0){
     panel.style.display='none';
     return;
