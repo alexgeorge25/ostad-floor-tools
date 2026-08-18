@@ -670,7 +670,7 @@ function drawQR(containerEl, text){
 
 /* ================= Tag rendering ================= */
 function tagQrId(b, prefix){
-  const clean = b.id.replace(/[^a-zA-Z0-9]/g,'');
+  const clean = String(b.id||'unknown').replace(/[^a-zA-Z0-9]/g,'');
   return prefix ? ('qr-'+prefix+'-'+clean) : ('qr-'+clean);
 }
 function bundleTagHtml(b, prefix){
@@ -1701,13 +1701,19 @@ async function tryFetchBundlesFromOffice(manual){
   }
   try{
     const data = await apiGet('bundles');
-    const remoteIds = new Set((data.bundles||[]).map(r=>r.id));
-    (data.bundles||[]).forEach(remote=>{
+    const rawList = data.bundles||[];
+    // Guard against malformed rows in the Sheet (e.g. a blank/garbled BundleID
+    // from a bad paste) instead of letting one bad row crash the whole refresh.
+    const validList = rawList.filter(r => r && typeof r.id === 'string' && r.id.trim() !== '');
+    const skippedCount = rawList.length - validList.length;
+
+    const remoteIds = new Set(validList.map(r=>r.id));
+    validList.forEach(remote=>{
       const local = findBundle(remote.id);
       if(local){
-        local.status = remote.status; // office/remote status wins
+        local.status = remote.status || 'unknown';
       } else {
-        DATA.bundles.push({...remote, synced:true});
+        DATA.bundles.push({...remote, status: remote.status || 'unknown', synced:true});
       }
     });
     // A bundle that was previously confirmed synced but no longer appears in the
@@ -1722,7 +1728,9 @@ async function tryFetchBundlesFromOffice(manual){
     populateBundleSelect();
     renderBundleList();
     renderLedger();
-    if(manual){
+    if(skippedCount > 0){
+      toast(skippedCount+' row(s) in the Sheet could not be read (missing Bundle ID) and were skipped - check MasterBundles for a damaged row.', true);
+    } else if(manual){
       toast(removedIds.length
         ? 'Bundle list refreshed - '+removedIds.length+' removed bundle(s) cleared from this iPad.'
         : 'Bundle list refreshed from office.');
