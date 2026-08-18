@@ -921,7 +921,6 @@ function openEditBundleModal(bundleId){
 document.getElementById('editBundleCancelBtn').addEventListener('click', ()=>{
   document.getElementById('editBundleModal').classList.remove('open');
 });
-wireStepperButtons(document.getElementById('editBundleModal'));
 document.getElementById('editBundleSaveBtn').addEventListener('click', async ()=>{
   const bundleId = document.getElementById('editBundleModal').dataset.bundleId;
   const b = findBundle(bundleId);
