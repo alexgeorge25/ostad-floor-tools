@@ -156,7 +156,7 @@
     position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:10px;text-transform:uppercase;
     letter-spacing:.08em;padding:3px 7px;border-radius:10px;border:1px solid currentColor;
   }
-  .badge.in_stock{color:#5f8a52;} .badge.cutting{color:#cf8f2e;} .badge.cut{color:#7a6a52;} .badge.in_inventory{color:#3a6b8a;}
+  .badge.in_stock{color:#5f8a52;} .badge.cutting{color:#cf8f2e;} .badge.cut{color:#7a6a52;} .badge.in_inventory{color:#3a6b8a;} .badge.unknown{color:var(--stamp-red);}
   .sync-chip{
     font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
     padding:2px 6px;border-radius:8px;border:1px solid currentColor;margin-left:6px;
@@ -178,7 +178,7 @@
     letter-spacing:.06em;padding:3px 8px;border-radius:9px;border:1px solid currentColor;
   }
   .status-pill.in_stock{color:var(--ok-green);} .status-pill.cutting{color:var(--amber-bright);}
-  .status-pill.cut{color:var(--cream-dim);} .status-pill.in_inventory{color:#6fa3c9;}
+  .status-pill.cut{color:var(--cream-dim);} .status-pill.in_inventory{color:#6fa3c9;} .status-pill.unknown{color:var(--stamp-red);}
 
   .tally-wrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:10px 0 4px;}
   .tally-marks{font-family:var(--mono);font-size:15px;letter-spacing:2px;color:var(--amber-bright);word-break:break-all;}
@@ -677,9 +677,10 @@ function bundleTagHtml(b, prefix){
   const qrId = tagQrId(b, prefix);
   const lineage = b.parentId ? `<div class="row">From: <b>${escapeHtml(b.parentId)}</b></div>` : '';
   const syncChip = `<span class="sync-chip ${b.synced?'synced':'pending'}">${b.synced?'Synced':'Pending sync'}</span>`;
+  const statusSafe = b.status || 'unknown';
   return `
     <div class="tag">
-      <span class="badge ${b.status}">${b.status.replace('_',' ')}</span>
+      <span class="badge ${statusSafe}">${statusSafe.replace('_',' ')}</span>
       <div class="qr-box" id="${qrId}"></div>
       <div class="info">
         <div class="bid">${escapeHtml(b.id)} ${syncChip}</div>
@@ -1502,7 +1503,7 @@ function renderLedgerTable(filter){
       <td>${escapeHtml(b.dimension||'-')}</td>
       <td>${escapeHtml(b.supplier||'-')}</td>
       <td>${b.pieceCount}</td>
-      <td><span class="status-pill ${b.status}">${b.status.replace('_',' ')}</span></td>
+      <td><span class="status-pill ${b.status||'unknown'}">${(b.status||'unknown').replace('_',' ')}</span></td>
       <td>${fmtDate(b.createdAt)}</td>
       <td><span class="sync-chip ${b.synced?'synced':'pending'}">${b.synced?'Synced':'Pending'}</span></td>
     </tr>`).join('') + '</tbody></table>';
