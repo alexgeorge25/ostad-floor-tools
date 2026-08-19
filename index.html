@@ -631,15 +631,14 @@ function toast(msg, isError){
   clearTimeout(toast._tm);
   toast._tm = setTimeout(()=>{ t.className='toast'; }, 3200);
 }
-function nextBundleSeq(dateStr){
-  const prefix = 'MB-' + dateStr.replace(/-/g,'');
-  const existing = DATA.bundles.filter(b => b.id.startsWith(prefix));
-  return existing.length + 1;
-}
 function genMasterId(){
-  const d = todayISO();
-  const seq = nextBundleSeq(d);
-  return 'MB-' + d.replace(/-/g,'') + '-' + String(seq).padStart(3,'0');
+  const now = new Date();
+  const mo = String(now.getMonth()+1).padStart(2,'0');
+  const dd = String(now.getDate()).padStart(2,'0');
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mi = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  return 'MB-' + mo+dd + '-' + hh+mi+ss;
 }
 function genChildId(parentId){
   const siblings = DATA.bundles.filter(b => b.parentId === parentId);
