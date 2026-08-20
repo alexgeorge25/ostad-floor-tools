@@ -156,7 +156,7 @@
     position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:10px;text-transform:uppercase;
     letter-spacing:.08em;padding:3px 7px;border-radius:10px;border:1px solid currentColor;
   }
-  .badge.in_stock{color:#5f8a52;} .badge.cutting{color:#cf8f2e;} .badge.cut{color:#7a6a52;} .badge.in_inventory{color:#3a6b8a;} .badge.unknown{color:var(--stamp-red);}
+  .badge.in_stock{color:#5f8a52;} .badge.cutting{color:#cf8f2e;} .badge.cut{color:#7a6a52;} .badge.in_inventory{color:#3a6b8a;} .badge.unknown{color:var(--stamp-red);} .badge.sold{color:#8a6a3a;}
   .sync-chip{
     font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
     padding:2px 6px;border-radius:8px;border:1px solid currentColor;margin-left:6px;
@@ -178,7 +178,7 @@
     letter-spacing:.06em;padding:3px 8px;border-radius:9px;border:1px solid currentColor;
   }
   .status-pill.in_stock{color:var(--ok-green);} .status-pill.cutting{color:var(--amber-bright);}
-  .status-pill.cut{color:var(--cream-dim);} .status-pill.in_inventory{color:#6fa3c9;} .status-pill.unknown{color:var(--stamp-red);}
+  .status-pill.cut{color:var(--cream-dim);} .status-pill.in_inventory{color:#6fa3c9;} .status-pill.unknown{color:var(--stamp-red);} .status-pill.sold{color:#c9a876;}
 
   .tally-wrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:10px 0 4px;}
   .tally-marks{font-family:var(--mono);font-size:15px;letter-spacing:2px;color:var(--amber-bright);word-break:break-all;}
@@ -270,6 +270,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="bundles">Master Bundles</button>
     <button class="tab-btn" data-tab="cutting">Cutting Report</button>
+    <button class="tab-btn" data-tab="sales">Sales</button>
     <button class="tab-btn" data-tab="ledger">Inventory Ledger</button>
     <button class="tab-btn" data-tab="sync">Sync Settings</button>
   </nav>
@@ -414,6 +415,56 @@
 
   </section>
 
+  <!-- ===================== TAB: SALES ===================== -->
+  <section id="tab-sales" class="tab-panel" style="display:none;">
+
+    <div class="panel">
+      <h2>1. Select Bundle to Sell</h2>
+      <p class="helptext">Sold at its original size - thickness, width, and length can't be changed here. If it needs a different size, use Cutting Report instead.</p>
+      <select id="sl-bundle-select">
+        <option value="">- Select a bundle -</option>
+      </select>
+      <div id="sl-selected-info"></div>
+    </div>
+
+    <div class="panel" id="sl-form-panel" style="display:none;">
+      <h2>2. Sale Details</h2>
+
+      <label>Quantity Sold</label>
+      <div class="stepper" style="height:auto;">
+        <button type="button" data-target="sl-qty" data-step="-100" style="width:auto;padding:0 8px;font-size:13px;">-100</button>
+        <button type="button" data-target="sl-qty" data-step="-10" style="width:auto;padding:0 8px;font-size:13px;">-10</button>
+        <button type="button" data-target="sl-qty" data-step="-1" style="width:auto;padding:0 8px;">-1</button>
+        <div class="val" id="sl-qty-val">0</div>
+        <button type="button" data-target="sl-qty" data-step="1" style="width:auto;padding:0 8px;">+1</button>
+        <button type="button" data-target="sl-qty" data-step="10" style="width:auto;padding:0 8px;font-size:13px;">+10</button>
+        <button type="button" data-target="sl-qty" data-step="100" style="width:auto;padding:0 8px;font-size:13px;">+100</button>
+      </div>
+      <div id="sl-qty-remaining" class="section-note"></div>
+
+      <label>Customer</label>
+      <select id="sl-customer"><option value="">- Select customer/order -</option></select>
+
+      <label>Date (DD/MM/YYYY)</label>
+      <div class="grid2" style="grid-template-columns:1fr 1.4fr 1fr;gap:8px;">
+        <select id="sl-date-day"></select>
+        <select id="sl-date-month"></select>
+        <select id="sl-date-year"></select>
+      </div>
+
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="btn" id="sl-save-btn">Save Sale</button>
+        <button class="btn secondary" id="sl-cancel-btn">Cancel</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Sales History</h2>
+      <div id="sl-history"></div>
+    </div>
+
+  </section>
+
   <!-- ===================== TAB: INVENTORY LEDGER ===================== -->
   <section id="tab-ledger" class="tab-panel" style="display:none;">
 
@@ -551,10 +602,10 @@ const SYNC_QUEUE_KEY = 'ostad_sync_queue_v1';
 function loadData(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
-    if(!raw) return {bundles:[], reports:[]};
+    if(!raw) return {bundles:[], reports:[], sales:[]};
     const d = JSON.parse(raw);
-    return {bundles: d.bundles||[], reports: d.reports||[]};
-  }catch(e){ return {bundles:[], reports:[]}; }
+    return {bundles: d.bundles||[], reports: d.reports||[], sales: d.sales||[]};
+  }catch(e){ return {bundles:[], reports:[], sales:[]}; }
 }
 function saveData(d){ localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
 
@@ -724,6 +775,7 @@ function refreshAllDropdowns(){
   fillSelect(document.getElementById('mb-supplier'), SETTINGS.SUPPLIER, '- Select -');
   fillSelect(document.getElementById('cr-station'), SETTINGS.STATION, '- Select station -');
   fillSelect(document.getElementById('session-select'), SETTINGS.STAFF, '- Select your name -');
+  fillSelect(document.getElementById('sl-customer'), SETTINGS.CUSTOMER, '- Select customer/order -');
   refreshExistingCutRowSelects();
   renderSettingsPreview();
 }
@@ -760,6 +812,7 @@ function updateStepperDisplay(target){
   const el = document.getElementById(target+'-val');
   if(el) el.textContent = stepperState[target]||0;
   if(target.startsWith('cutqty-')) updateTally();
+  if(target==='sl-qty') updateSaleRemaining();
 }
 function getStepperValue(target){ return stepperState[target]||0; }
 function setStepperValue(target, val){ stepperState[target] = Math.max(0, val); updateStepperDisplay(target); }
@@ -845,6 +898,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='bundles') renderBundleList();
     if(btn.dataset.tab==='cutting'){ populateBundleSelect(); renderCuttingHistory(); tryFetchBundlesFromOffice(); tryFetchReportsFromOffice(); }
+    if(btn.dataset.tab==='sales'){ populateSaleBundleSelect(); renderSalesHistory(); tryFetchBundlesFromOffice(); }
     if(btn.dataset.tab==='ledger') renderLedger();
     if(btn.dataset.tab==='sync'){ renderSyncTab(); }
   });
@@ -1118,7 +1172,7 @@ function selectBundleForCutting(id){
   updateTally();
 }
 
-function addCutRow(){
+function addCutRow(prefill){
   cutRowCount++;
   const n = cutRowCount;
   const target = 'cutqty-'+n;
@@ -1170,7 +1224,8 @@ function addCutRow(){
     <select class="cut-dest">
       <option value="production">To Production</option>
       <option value="balance">Balance (back to stock)</option>
-      <option value="damaged">Damaged</option>
+      <option value="damaged">Damaged (kept, may reuse)</option>
+      <option value="waste">Waste (discarded)</option>
     </select>`;
   div.querySelector('.icon-btn').addEventListener('click', ()=>{ delete stepperState[target]; div.remove(); updateTally(); });
   const destSel = div.querySelector('.cut-dest');
@@ -1180,6 +1235,15 @@ function addCutRow(){
   document.getElementById('cr-cut-rows').appendChild(div);
   initStepper(target, 0);
   wireStepperButtons(div);
+  if(prefill){
+    div.querySelector('.cut-thickness').value = prefill.cutThickness || '';
+    div.querySelector('.cut-width').value = prefill.cutWidth || '';
+    div.querySelector('.cut-length').value = prefill.cutLength || '';
+    destSel.value = prefill.destination || 'production';
+    applyCutForLock(destSel, forSel);
+    if(prefill.destination === 'production') forSel.value = prefill.forCustomer || '';
+    setStepperValue(target, prefill.qty || 0);
+  }
 }
 function applyCutForLock(destSel, forSel){
   if(destSel.value === 'production'){
@@ -1251,14 +1315,15 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
   const totalCut = rows.reduce((s,r)=>s+r.qty,0);
   const balanceQty = rows.filter(r=>r.destination==='balance').reduce((s,r)=>s+r.qty,0);
   const damagedQty = rows.filter(r=>r.destination==='damaged').reduce((s,r)=>s+r.qty,0);
-  const productionQty = totalCut - balanceQty - damagedQty;
+  const wasteQty = rows.filter(r=>r.destination==='waste').reduce((s,r)=>s+r.qty,0);
+  const productionQty = totalCut - balanceQty - damagedQty - wasteQty;
 
   const report = {
     id: 'CR-'+Date.now(),
     bundleId: currentCutBundle.id,
     station, date, notes:'',
     cuts: rows,
-    totalCut, productionQty, balanceQty, damagedQty,
+    totalCut, productionQty, balanceQty, damagedQty, wasteQty,
     originalCount: currentCutBundle.pieceCount,
     createdAt: todayISO(),
     enteredBy: SESSION_PERSON,
@@ -1340,7 +1405,7 @@ function renderCuttingHistory(){
     return;
   }
   wrap.innerHTML = `<table><thead><tr>
-      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Sync</th><th>Status</th>
+      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Waste</th><th>Sync</th><th>Status</th>
     </tr></thead><tbody>` +
     reports.map(r=>`<tr>
       <td style="font-family:var(--mono);">${escapeHtml(r.bundleId)}</td>
@@ -1350,37 +1415,38 @@ function renderCuttingHistory(){
       <td>${r.productionQty}</td>
       <td>${r.balanceQty}${(r.balanceBundleIds&&r.balanceBundleIds.length) ? ' -> '+r.balanceBundleIds.map(escapeHtml).join(', ') : ''}</td>
       <td>${r.damagedQty||0}</td>
+      <td>${r.wasteQty||0}</td>
       <td><span class="sync-chip ${r.synced?'synced':'pending'}">${r.synced?'Synced':'Pending'}</span></td>
       <td>${r.voided
           ? '<span class="status-pill cut">VOIDED</span>'
-          : `<button type="button" class="btn danger" style="padding:6px 12px;min-height:auto;font-size:11px;" data-void-report="${escapeHtml(r.id)}">Void</button>`}</td>
+          : `<button type="button" class="btn secondary" style="padding:6px 12px;min-height:auto;font-size:11px;" data-edit-report="${escapeHtml(r.id)}">Edit</button>`}</td>
     </tr>`).join('') + '</tbody></table>';
-  wrap.querySelectorAll('[data-void-report]').forEach(btn=>{
-    btn.addEventListener('click', ()=> voidReport(btn.dataset.voidReport));
+  wrap.querySelectorAll('[data-edit-report]').forEach(btn=>{
+    btn.addEventListener('click', ()=> editCuttingReport(btn.dataset.editReport));
   });
 }
 
-async function voidReport(reportId){
+async function editCuttingReport(reportId){
   const report = DATA.reports.find(r=>r.id===reportId);
   if(!report || report.voided) return;
 
   if(!report.synced){
-    toast('This report has not finished syncing to the office yet - wait for it to sync before voiding.', true);
+    toast('This report has not finished syncing to the office yet - wait for it to sync before editing.', true);
     return;
   }
   if(!syncConfigured() || !navigator.onLine){
-    toast('Voiding needs a live connection to the office - try again when online.', true);
+    toast('Editing needs a live connection to the office - try again when online.', true);
     return;
   }
   const balanceIds = report.balanceBundleIds || (report.balanceBundleId ? [report.balanceBundleId] : []);
   for(const bid of balanceIds){
     const bal = findBundle(bid);
     if(bal && bal.status !== 'in_stock'){
-      toast('Cannot void: '+bid+' has already been used ('+bal.status+'). Void that later report first.', true);
+      toast('Cannot edit: '+bid+' has already been used ('+bal.status+'). That report must be corrected first.', true);
       return;
     }
   }
-  const ok = window.confirm('Void this cutting report for '+report.bundleId+'? This will put the bundle back in stock and remove any balance bundle(s) it created. This cannot be undone.');
+  const ok = window.confirm('Edit this cutting report for '+report.bundleId+'? The current entry will be voided and the details reloaded here for you to correct and save again. This cannot be undone.');
   if(!ok) return;
 
   try{
@@ -1396,11 +1462,237 @@ async function voidReport(reportId){
     renderBundleList();
     populateBundleSelect();
     renderLedger();
-    toast('Report voided - '+report.bundleId+' is back in stock.');
+
+    // Jump to Cutting Report and refill the form with the voided report's
+    // details, so correcting a mistake means adjusting a few fields rather
+    // than re-entering everything from scratch.
+    document.querySelector('[data-tab="cutting"]').click();
+    selectBundleForCutting(report.bundleId);
+    document.getElementById('cr-station').value = report.station || '';
+    if(report.date){
+      const parts = String(report.date).split('-');
+      if(parts.length===3){
+        document.getElementById('cr-date-year').value = parts[0];
+        document.getElementById('cr-date-month').value = parts[1];
+        document.getElementById('cr-date-day').value = parts[2];
+      }
+    }
+    document.getElementById('cr-cut-rows').innerHTML = '';
+    cutRowCount = 0;
+    if(report.cuts && report.cuts.length){
+      report.cuts.forEach(cut=> addCutRow(cut));
+    } else {
+      addCutRow();
+    }
+    updateTally();
+    toast('Report voided - correct the details below and save again.');
   }catch(err){
-    toast('Could not void report: '+err.message, true);
+    toast('Could not edit report: '+err.message, true);
   }
 }
+
+/* ================= SALES TAB ================= */
+let currentSaleBundle = null;
+
+function populateSaleBundleSelect(){
+  const sel = document.getElementById('sl-bundle-select');
+  const available = DATA.bundles.filter(b => b.status==='in_stock' && b.pieceCount>0);
+  sel.innerHTML = '<option value="">- Select a bundle -</option>' +
+    available.map(b=>`<option value="${b.id}">[${b.type==='master'?'Master':'Child'}] ${b.id} - ${escapeHtml(b.dimension)} (${b.pieceCount} pcs)</option>`).join('');
+}
+document.getElementById('sl-bundle-select').addEventListener('change', (e)=>{
+  selectBundleForSale(e.target.value);
+});
+function selectBundleForSale(id){
+  if(!id){
+    currentSaleBundle = null;
+    document.getElementById('sl-form-panel').style.display='none';
+    document.getElementById('sl-selected-info').innerHTML='';
+    return;
+  }
+  const b = findBundle(id);
+  if(!b){ toast('Bundle not found: '+id, true); return; }
+  if(b.status !== 'in_stock' || b.pieceCount<=0){
+    toast('Bundle '+id+' is not available to sell.', true);
+    document.getElementById('sl-bundle-select').value='';
+    return;
+  }
+  currentSaleBundle = b;
+  document.getElementById('sl-bundle-select').value = id;
+  document.getElementById('sl-selected-info').innerHTML = `<div style="margin-top:12px;">${bundleTagHtml(b)}</div>`;
+  renderTagQR(b);
+  document.getElementById('sl-form-panel').style.display='block';
+  document.getElementById('sl-customer').value='';
+  setStepperValue('sl-qty', 0);
+  setSaleDateSelectorsToToday();
+  updateSaleRemaining();
+}
+function updateSaleRemaining(){
+  if(!currentSaleBundle) return;
+  const qty = getStepperValue('sl-qty');
+  const remaining = currentSaleBundle.pieceCount - qty;
+  const el = document.getElementById('sl-qty-remaining');
+  if(qty<=0){
+    el.textContent = 'Available: '+currentSaleBundle.pieceCount+' pcs';
+  } else if(remaining<0){
+    el.textContent = 'Quantity exceeds available stock ('+currentSaleBundle.pieceCount+' pcs available).';
+  } else if(remaining===0){
+    el.textContent = 'Selling all '+currentSaleBundle.pieceCount+' pcs - bundle will be fully sold.';
+  } else {
+    el.textContent = remaining+' pcs will remain in stock after this sale.';
+  }
+}
+document.getElementById('sl-cancel-btn').addEventListener('click', ()=>{
+  currentSaleBundle = null;
+  document.getElementById('sl-form-panel').style.display='none';
+  document.getElementById('sl-bundle-select').value='';
+  document.getElementById('sl-selected-info').innerHTML='';
+});
+
+document.getElementById('sl-save-btn').addEventListener('click', async ()=>{
+  if(!requireSessionPerson()) return;
+  if(!currentSaleBundle){ toast('Select a bundle first.', true); return; }
+  const qty = getStepperValue('sl-qty');
+  const customer = document.getElementById('sl-customer').value;
+  const date = getSaleDateFromSelectors();
+  if(!qty || qty<1){ toast('Set a quantity above zero.', true); return; }
+  if(qty > currentSaleBundle.pieceCount){ toast('Quantity exceeds available stock.', true); return; }
+  if(!customer){ toast('Select a customer.', true); return; }
+
+  const remaining = currentSaleBundle.pieceCount - qty;
+  const sale = {
+    id: 'SL-'+Date.now(),
+    bundleId: currentSaleBundle.id,
+    thickness: currentSaleBundle.thickness, width: currentSaleBundle.width, length: currentSaleBundle.length,
+    dimension: currentSaleBundle.dimension,
+    qty, customer, date,
+    remainingAfter: remaining,
+    createdAt: todayISO(),
+    enteredBy: SESSION_PERSON,
+    voided: false,
+    synced: false
+  };
+  currentSaleBundle.pieceCount = remaining;
+  currentSaleBundle.status = (remaining<=0) ? 'sold' : 'in_stock';
+  currentSaleBundle.synced = false;
+
+  DATA.sales.push(sale);
+  saveData(DATA);
+
+  document.getElementById('sl-form-panel').style.display='none';
+  document.getElementById('sl-bundle-select').value='';
+  document.getElementById('sl-selected-info').innerHTML='';
+  currentSaleBundle = null;
+
+  renderBundleList(); populateBundleSelect(); populateSaleBundleSelect(); renderLedger(); renderSalesHistory();
+  toast('Sale saved for '+sale.bundleId+'.');
+
+  await trySyncSale(sale);
+  renderSalesHistory(); renderBundleList(); renderLedger();
+});
+
+async function trySyncSale(sale){
+  const bundle = findBundle(sale.bundleId);
+  if(!syncConfigured() || !navigator.onLine){
+    queueAdd({type:'sale', payload:{sale, bundle}});
+    updateSyncBadge();
+    return false;
+  }
+  try{
+    await apiPost({action:'createSale', sale, bundleId: sale.bundleId, newPieceCount: bundle?bundle.pieceCount:sale.remainingAfter, newStatus: bundle?bundle.status:(sale.remainingAfter<=0?'sold':'in_stock')});
+    sale.synced = true;
+    if(bundle) bundle.synced = true;
+    saveData(DATA);
+    updateSyncBadge();
+    return true;
+  }catch(err){
+    queueAdd({type:'sale', payload:{sale, bundle}});
+    updateSyncBadge();
+    return false;
+  }
+}
+
+function renderSalesHistory(){
+  const wrap = document.getElementById('sl-history');
+  const sales = [...DATA.sales].sort((a,b)=> b.id.localeCompare(a.id));
+  if(sales.length===0){
+    wrap.innerHTML = '<div class="empty-state">No sales logged yet.</div>';
+    return;
+  }
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Bundle</th><th>Size</th><th>Qty Sold</th><th>Customer</th><th>Date</th><th>Sync</th><th>Status</th>
+    </tr></thead><tbody>` +
+    sales.map(s=>`<tr>
+      <td style="font-family:var(--mono);">${escapeHtml(s.bundleId)}</td>
+      <td>${escapeHtml(s.dimension||'-')}</td>
+      <td>${s.qty}</td>
+      <td>${escapeHtml(s.customer)}</td>
+      <td>${fmtDate(s.date)}</td>
+      <td><span class="sync-chip ${s.synced?'synced':'pending'}">${s.synced?'Synced':'Pending'}</span></td>
+      <td>${s.voided
+          ? '<span class="status-pill cut">VOIDED</span>'
+          : `<button type="button" class="btn danger" style="padding:6px 12px;min-height:auto;font-size:11px;" data-void-sale="${escapeHtml(s.id)}">Void</button>`}</td>
+    </tr>`).join('') + '</tbody></table>';
+  wrap.querySelectorAll('[data-void-sale]').forEach(btn=>{
+    btn.addEventListener('click', ()=> voidSale(btn.dataset.voidSale));
+  });
+}
+
+async function voidSale(saleId){
+  const sale = DATA.sales.find(s=>s.id===saleId);
+  if(!sale || sale.voided) return;
+  if(!sale.synced){
+    toast('This sale has not finished syncing to the office yet - wait for it to sync before voiding.', true);
+    return;
+  }
+  if(!syncConfigured() || !navigator.onLine){
+    toast('Voiding needs a live connection to the office - try again when online.', true);
+    return;
+  }
+  const ok = window.confirm('Void this sale of '+sale.qty+' pcs from '+sale.bundleId+'? The pieces will be added back to stock. This cannot be undone.');
+  if(!ok) return;
+  try{
+    await apiPost({action:'voidSale', saleId: sale.id, bundleId: sale.bundleId, qty: sale.qty});
+    sale.voided = true;
+    const bundle = findBundle(sale.bundleId);
+    if(bundle){
+      bundle.pieceCount = bundle.pieceCount + sale.qty;
+      bundle.status = 'in_stock';
+      bundle.synced = true; // server already applied this via the voidSale action above
+    }
+    saveData(DATA);
+    renderSalesHistory(); renderBundleList(); populateBundleSelect(); populateSaleBundleSelect(); renderLedger();
+    toast('Sale voided - '+sale.qty+' pcs returned to stock on '+sale.bundleId+'.');
+  }catch(err){
+    toast('Could not void sale: '+err.message, true);
+  }
+}
+
+/* ================= Sale date selectors ================= */
+function populateSaleDateSelectors(){
+  const daySel = document.getElementById('sl-date-day');
+  const monthSel = document.getElementById('sl-date-month');
+  const yearSel = document.getElementById('sl-date-year');
+  daySel.innerHTML = Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${String(d).padStart(2,'0')}">${String(d).padStart(2,'0')}</option>`).join('');
+  monthSel.innerHTML = MONTH_NAMES.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('');
+  const thisYear = new Date().getFullYear();
+  const years = [thisYear-1, thisYear, thisYear+1];
+  yearSel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+}
+function setSaleDateSelectorsToToday(){
+  const now = new Date();
+  document.getElementById('sl-date-day').value = String(now.getDate()).padStart(2,'0');
+  document.getElementById('sl-date-month').value = String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('sl-date-year').value = String(now.getFullYear());
+}
+function getSaleDateFromSelectors(){
+  const d = document.getElementById('sl-date-day').value;
+  const m = document.getElementById('sl-date-month').value;
+  const y = document.getElementById('sl-date-year').value;
+  if(!d || !m || !y) return todayISO();
+  return y+'-'+m+'-'+d;
+}
+populateSaleDateSelectors();
 
 /* ================= QR SCANNING ================= */
 let scanStream = null;
@@ -1674,6 +1966,14 @@ async function processQueue(){
         await apiPost({action:'editBundle', bundle:item.payload});
         const local = findBundle(item.payload.id);
         if(local) local.synced = true;
+      } else if(item.type==='sale'){
+        const sale = item.payload.sale;
+        const bundle = item.payload.bundle || findBundle(sale.bundleId);
+        await apiPost({action:'createSale', sale, bundleId: sale.bundleId, newPieceCount: bundle?bundle.pieceCount:sale.remainingAfter, newStatus: bundle?bundle.status:(sale.remainingAfter<=0?'sold':'in_stock')});
+        const localSale = DATA.sales.find(s=>s.id===sale.id);
+        if(localSale) localSale.synced = true;
+        const localBundle = findBundle(sale.bundleId);
+        if(localBundle) localBundle.synced = true;
       }
     }catch(err){
       remaining.push(item);
@@ -1682,7 +1982,7 @@ async function processQueue(){
   saveQueue(remaining);
   saveData(DATA);
   updateSyncBadge();
-  renderBundleList(); renderCuttingHistory(); renderLedger();
+  renderBundleList(); renderCuttingHistory(); renderSalesHistory(); renderLedger();
   if(remaining.length < q.length) toast('Synced '+(q.length-remaining.length)+' pending item(s) to the office.');
 }
 
@@ -1718,7 +2018,12 @@ async function tryFetchBundlesFromOffice(manual){
     validList.forEach(remote=>{
       const local = findBundle(remote.id);
       if(local){
-        local.status = remote.status || 'unknown';
+        // Only overwrite from remote if this bundle has no pending local edit
+        // waiting to go out - otherwise an in-flight change (like a sale just
+        // made on this device) could get clobbered by a stale office copy.
+        if(local.synced){
+          Object.assign(local, remote, {status: remote.status || 'unknown', synced:true});
+        }
       } else {
         DATA.bundles.push({...remote, status: remote.status || 'unknown', synced:true});
       }
@@ -1813,7 +2118,12 @@ function updateSyncBadge(){
   if(qStatus){
     qStatus.innerHTML = q.length===0
       ? '<div class="empty-state" style="padding:14px;">Nothing pending.</div>'
-      : `<div class="section-note">${q.length} item(s) waiting to sync: ${q.map(i=>i.type==='bundle'?i.payload.id:i.payload.report.id).join(', ')}</div>`;
+      : `<div class="section-note">${q.length} item(s) waiting to sync: ${q.map(i=>{
+          if(i.type==='bundle' || i.type==='editBundle') return i.payload.id;
+          if(i.type==='report') return i.payload.report.id;
+          if(i.type==='sale') return i.payload.sale.id;
+          return '?';
+        }).join(', ')}</div>`;
   }
 }
 document.getElementById('syncBadge').addEventListener('click', ()=>{
