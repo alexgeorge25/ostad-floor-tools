@@ -360,6 +360,8 @@
         <button type="button" class="btn secondary type-filter-btn" data-type="master">Master Only</button>
         <button type="button" class="btn secondary type-filter-btn" data-type="child">Child Only</button>
       </div>
+      <label>Search</label>
+      <input type="text" id="cr-bundle-search" placeholder="Type Bundle ID, container, or size to narrow the list...">
       <select id="cr-bundle-select">
         <option value="">- Select a bundle -</option>
       </select>
@@ -421,6 +423,11 @@
     <div class="panel">
       <h2>1. Select Bundle to Sell</h2>
       <p class="helptext">Sold at its original size - thickness, width, and length can't be changed here. If it needs a different size, use Cutting Report instead.</p>
+      <div class="btn-row" style="margin-bottom:12px;">
+        <button class="btn secondary" id="sl-refresh-btn">Refresh from Office</button>
+      </div>
+      <label>Search</label>
+      <input type="text" id="sl-bundle-search" placeholder="Type Bundle ID, container, or size to narrow the list...">
       <select id="sl-bundle-select">
         <option value="">- Select a bundle -</option>
       </select>
@@ -616,7 +623,7 @@ const DEFAULT_SETTINGS = {
   CONTAINER: [],
   INVOICE: [],
   SUPPLIER: [],
-  STATION: ['Resaw 1','Resaw 2','Cross-cut','Hand Station'],
+  STATION: ['Stamping','Slicing','Moulder','Rebundle'],
   STAFF: [],
   CUTTHICKNESS: ['20','25','30'],
   CUTWIDTH: ['75','100'],
@@ -898,7 +905,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='bundles') renderBundleList();
     if(btn.dataset.tab==='cutting'){ populateBundleSelect(); renderCuttingHistory(); tryFetchBundlesFromOffice(); tryFetchReportsFromOffice(); }
-    if(btn.dataset.tab==='sales'){ populateSaleBundleSelect(); renderSalesHistory(); tryFetchBundlesFromOffice(); }
+    if(btn.dataset.tab==='sales'){ populateSaleBundleSelect(); renderSalesHistory(); tryFetchBundlesFromOffice(); tryFetchSalesFromOffice(); }
     if(btn.dataset.tab==='ledger') renderLedger();
     if(btn.dataset.tab==='sync'){ renderSyncTab(); }
   });
@@ -1126,12 +1133,25 @@ let bundleTypeFilter = 'all';
 
 function populateBundleSelect(){
   const sel = document.getElementById('cr-bundle-select');
+  const searchEl = document.getElementById('cr-bundle-search');
+  const search = (searchEl ? searchEl.value.trim().toLowerCase() : '');
   let available = DATA.bundles.filter(b => b.status==='in_stock');
   if(bundleTypeFilter === 'master') available = available.filter(b=>b.type==='master');
   if(bundleTypeFilter === 'child') available = available.filter(b=>b.type==='child');
-  sel.innerHTML = '<option value="">- Select a bundle -</option>' +
+  if(search){
+    available = available.filter(b =>
+      b.id.toLowerCase().includes(search) ||
+      (b.dimension||'').toLowerCase().includes(search) ||
+      (b.containerRef||'').toLowerCase().includes(search) ||
+      (b.supplier||'').toLowerCase().includes(search)
+    );
+  }
+  const current = sel.value;
+  sel.innerHTML = '<option value="">- Select a bundle ('+available.length+' match'+(available.length===1?'':'es')+') -</option>' +
     available.map(b=>`<option value="${b.id}">[${b.type==='master'?'Master':'Child'}] ${b.id} - ${escapeHtml(b.dimension)} (${b.pieceCount} pcs)</option>`).join('');
+  if(available.some(b=>b.id===current)) sel.value = current;
 }
+document.getElementById('cr-bundle-search').addEventListener('input', ()=> populateBundleSelect());
 document.querySelectorAll('.type-filter-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.type-filter-btn').forEach(b=>b.classList.remove('active'));
@@ -1496,10 +1516,23 @@ let currentSaleBundle = null;
 
 function populateSaleBundleSelect(){
   const sel = document.getElementById('sl-bundle-select');
-  const available = DATA.bundles.filter(b => b.status==='in_stock' && b.pieceCount>0);
-  sel.innerHTML = '<option value="">- Select a bundle -</option>' +
+  const searchEl = document.getElementById('sl-bundle-search');
+  const search = (searchEl ? searchEl.value.trim().toLowerCase() : '');
+  let available = DATA.bundles.filter(b => b.status==='in_stock' && b.pieceCount>0);
+  if(search){
+    available = available.filter(b =>
+      b.id.toLowerCase().includes(search) ||
+      (b.dimension||'').toLowerCase().includes(search) ||
+      (b.containerRef||'').toLowerCase().includes(search) ||
+      (b.supplier||'').toLowerCase().includes(search)
+    );
+  }
+  const current = sel.value;
+  sel.innerHTML = '<option value="">- Select a bundle ('+available.length+' match'+(available.length===1?'':'es')+') -</option>' +
     available.map(b=>`<option value="${b.id}">[${b.type==='master'?'Master':'Child'}] ${b.id} - ${escapeHtml(b.dimension)} (${b.pieceCount} pcs)</option>`).join('');
+  if(available.some(b=>b.id===current)) sel.value = current;
 }
+document.getElementById('sl-bundle-search').addEventListener('input', ()=> populateSaleBundleSelect());
 document.getElementById('sl-bundle-select').addEventListener('change', (e)=>{
   selectBundleForSale(e.target.value);
 });
@@ -1620,7 +1653,7 @@ function renderSalesHistory(){
     return;
   }
   wrap.innerHTML = `<table><thead><tr>
-      <th>Bundle</th><th>Size</th><th>Qty Sold</th><th>Customer</th><th>Date</th><th>Sync</th><th>Status</th>
+      <th>Bundle</th><th>Size</th><th>Qty Sold</th><th>Customer</th><th>Date</th><th>Sync</th><th></th>
     </tr></thead><tbody>` +
     sales.map(s=>`<tr>
       <td style="font-family:var(--mono);">${escapeHtml(s.bundleId)}</td>
@@ -1629,42 +1662,40 @@ function renderSalesHistory(){
       <td>${escapeHtml(s.customer)}</td>
       <td>${fmtDate(s.date)}</td>
       <td><span class="sync-chip ${s.synced?'synced':'pending'}">${s.synced?'Synced':'Pending'}</span></td>
-      <td>${s.voided
-          ? '<span class="status-pill cut">VOIDED</span>'
-          : `<button type="button" class="btn danger" style="padding:6px 12px;min-height:auto;font-size:11px;" data-void-sale="${escapeHtml(s.id)}">Void</button>`}</td>
+      <td><button type="button" class="btn danger" style="padding:6px 12px;min-height:auto;font-size:11px;" data-delete-sale="${escapeHtml(s.id)}">Delete</button></td>
     </tr>`).join('') + '</tbody></table>';
-  wrap.querySelectorAll('[data-void-sale]').forEach(btn=>{
-    btn.addEventListener('click', ()=> voidSale(btn.dataset.voidSale));
+  wrap.querySelectorAll('[data-delete-sale]').forEach(btn=>{
+    btn.addEventListener('click', ()=> deleteSale(btn.dataset.deleteSale));
   });
 }
 
-async function voidSale(saleId){
+async function deleteSale(saleId){
   const sale = DATA.sales.find(s=>s.id===saleId);
-  if(!sale || sale.voided) return;
+  if(!sale) return;
   if(!sale.synced){
-    toast('This sale has not finished syncing to the office yet - wait for it to sync before voiding.', true);
+    toast('This sale has not finished syncing to the office yet - wait for it to sync before deleting.', true);
     return;
   }
   if(!syncConfigured() || !navigator.onLine){
-    toast('Voiding needs a live connection to the office - try again when online.', true);
+    toast('Deleting needs a live connection to the office - try again when online.', true);
     return;
   }
-  const ok = window.confirm('Void this sale of '+sale.qty+' pcs from '+sale.bundleId+'? The pieces will be added back to stock. This cannot be undone.');
+  const ok = window.confirm('Delete this sale of '+sale.qty+' pcs from '+sale.bundleId+'? Use this for mistakes or a customer return - the pieces will be added back to stock. This cannot be undone.');
   if(!ok) return;
   try{
-    await apiPost({action:'voidSale', saleId: sale.id, bundleId: sale.bundleId, qty: sale.qty});
-    sale.voided = true;
+    await apiPost({action:'deleteSale', saleId: sale.id, bundleId: sale.bundleId, qty: sale.qty});
+    DATA.sales = DATA.sales.filter(s=>s.id!==saleId);
     const bundle = findBundle(sale.bundleId);
     if(bundle){
       bundle.pieceCount = bundle.pieceCount + sale.qty;
       bundle.status = 'in_stock';
-      bundle.synced = true; // server already applied this via the voidSale action above
+      bundle.synced = true; // server already applied this via the deleteSale action above
     }
     saveData(DATA);
     renderSalesHistory(); renderBundleList(); populateBundleSelect(); populateSaleBundleSelect(); renderLedger();
-    toast('Sale voided - '+sale.qty+' pcs returned to stock on '+sale.bundleId+'.');
+    toast('Sale deleted - '+sale.qty+' pcs returned to stock on '+sale.bundleId+'.');
   }catch(err){
-    toast('Could not void sale: '+err.message, true);
+    toast('Could not delete sale: '+err.message, true);
   }
 }
 
@@ -1759,6 +1790,11 @@ document.getElementById('cr-refresh-btn').addEventListener('click', async ()=>{
   toast('Refreshing from office...');
   await tryFetchBundlesFromOffice(true);
   await tryFetchReportsFromOffice(true);
+});
+document.getElementById('sl-refresh-btn').addEventListener('click', async ()=>{
+  toast('Refreshing from office...');
+  await tryFetchBundlesFromOffice(true);
+  await tryFetchSalesFromOffice(true);
 });
 
 /* ================= LEDGER TAB ================= */
@@ -2101,6 +2137,51 @@ async function tryFetchReportsFromOffice(manual){
   }
 }
 
+async function tryFetchSalesFromOffice(manual){
+  if(!syncConfigured() || !navigator.onLine){
+    if(manual) toast('Not connected to office right now.', true);
+    return;
+  }
+  try{
+    const data = await apiGet('sales');
+    const remoteSales = data.sales || [];
+    const remoteIds = new Set(remoteSales.map(s=>s.id));
+
+    // A sale that was previously confirmed synced but no longer exists in the
+    // Sheet has been deleted there directly - remove it here too. Note: a
+    // manual sheet deletion like this does NOT automatically restore the
+    // bundle's piece count - only the Delete button on the iPad does that in
+    // one step. If someone deletes a Sales row by hand, also correct the
+    // PieceCount on MasterBundles by hand, and it'll sync to every iPad
+    // normally on the next bundle refresh.
+    const removedIds = DATA.sales.filter(s => s.synced && !remoteIds.has(s.id)).map(s=>s.id);
+    if(removedIds.length){
+      DATA.sales = DATA.sales.filter(s => !removedIds.includes(s.id));
+    }
+
+    // Bring in any sale made on a different iPad.
+    let addedCount = 0;
+    remoteSales.forEach(remote=>{
+      const local = DATA.sales.find(s=>s.id===remote.id);
+      if(!local){
+        DATA.sales.push({...remote, synced:true});
+        addedCount++;
+      }
+    });
+
+    saveData(DATA);
+    renderSalesHistory();
+    if(manual){
+      const parts = [];
+      if(removedIds.length) parts.push(removedIds.length+' removed');
+      if(addedCount) parts.push(addedCount+' added');
+      toast(parts.length ? 'Sales history refreshed - '+parts.join(', ')+'.' : 'Sales history refreshed from office.');
+    }
+  }catch(err){
+    if(manual) toast('Could not reach office: '+err.message, true);
+  }
+}
+
 function updateSyncBadge(){
   const badge = document.getElementById('syncBadge');
   const text = document.getElementById('syncBadgeText');
@@ -2185,6 +2266,7 @@ if(syncConfigured() && navigator.onLine){
   tryFetchSettingsFromOffice(true);
   tryFetchBundlesFromOffice(false);
   tryFetchReportsFromOffice(false);
+  tryFetchSalesFromOffice(false);
 }
 </script>
 </body>
