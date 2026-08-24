@@ -205,6 +205,9 @@
   #editBundleModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:50;align-items:center;justify-content:center;padding:16px;overflow-y:auto;}
   #editBundleModal.open{display:flex;}
   #editBundleModal .box{background:var(--wood-panel);border:1px solid var(--line);border-radius:4px;padding:16px;max-width:420px;width:100%;margin:auto;}
+  #viewReportModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:50;align-items:center;justify-content:center;padding:16px;overflow-y:auto;}
+  #viewReportModal.open{display:flex;}
+  #viewReportModal .box{background:var(--wood-panel);border:1px solid var(--line);border-radius:4px;padding:16px;max-width:480px;width:100%;margin:auto;}
   #scanVideo{width:100%;border-radius:3px;background:#000;}
   .scan-msg{font-size:12.5px;color:var(--cream-dim);margin-top:10px;font-family:var(--mono);min-height:18px;}
 
@@ -589,6 +592,17 @@
     <div class="btn-row">
       <button class="btn" id="editBundleSaveBtn">Save Correction</button>
       <button class="btn secondary" id="editBundleCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="viewReportModal">
+  <div class="box">
+    <h2 style="font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber-bright);margin:0 0 12px;">Cutting Report <span id="viewReportIdLabel"></span></h2>
+    <div id="viewReportBody" style="font-size:13.5px;color:var(--cream);line-height:1.6;"></div>
+    <div class="btn-row" style="margin-top:16px;">
+      <button class="btn danger" id="viewReportEditBtn">Edit This Report</button>
+      <button class="btn secondary" id="viewReportCloseBtn">Close</button>
     </div>
   </div>
 </div>
@@ -1439,12 +1453,45 @@ function renderCuttingHistory(){
       <td><span class="sync-chip ${r.synced?'synced':'pending'}">${r.synced?'Synced':'Pending'}</span></td>
       <td>${r.voided
           ? '<span class="status-pill cut">VOIDED</span>'
-          : `<button type="button" class="btn secondary" style="padding:6px 12px;min-height:auto;font-size:11px;" data-edit-report="${escapeHtml(r.id)}">Edit</button>`}</td>
+          : `<button type="button" class="btn secondary" style="padding:6px 12px;min-height:auto;font-size:11px;" data-view-report="${escapeHtml(r.id)}">View/Edit</button>`}</td>
     </tr>`).join('') + '</tbody></table>';
-  wrap.querySelectorAll('[data-edit-report]').forEach(btn=>{
-    btn.addEventListener('click', ()=> editCuttingReport(btn.dataset.editReport));
+  wrap.querySelectorAll('[data-view-report]').forEach(btn=>{
+    btn.addEventListener('click', ()=> viewCuttingReport(btn.dataset.viewReport));
   });
 }
+
+function viewCuttingReport(reportId){
+  const report = DATA.reports.find(r=>r.id===reportId);
+  if(!report) return;
+  document.getElementById('viewReportIdLabel').textContent = report.id;
+  const cutsHtml = (report.cuts && report.cuts.length)
+    ? `<table style="width:100%;margin-top:8px;"><thead><tr><th>Size</th><th>Qty</th><th>Destination</th><th>For</th></tr></thead><tbody>` +
+      report.cuts.map(c=>`<tr>
+        <td>${escapeHtml(c.size||'-')}</td>
+        <td>${c.qty}</td>
+        <td>${escapeHtml(c.destination)}</td>
+        <td>${escapeHtml(c.forCustomer||'-')}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="helptext">Cut line detail isn\'t stored locally for this report (it may have synced in from another device) - totals below are still accurate.</p>';
+  document.getElementById('viewReportBody').innerHTML = `
+    <div class="row" style="margin-bottom:4px;"><b>Bundle:</b> ${escapeHtml(report.bundleId)}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Station:</b> ${escapeHtml(report.station)}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Date:</b> ${fmtDate(report.date)}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Entered by:</b> ${escapeHtml(report.enteredBy||'-')}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Totals:</b> ${report.totalCut} / ${report.originalCount} cut - Production ${report.productionQty}, Balance ${report.balanceQty}, Damaged ${report.damagedQty||0}, Waste ${report.wasteQty||0}</div>
+    ${cutsHtml}
+  `;
+  document.getElementById('viewReportModal').dataset.reportId = reportId;
+  document.getElementById('viewReportModal').classList.add('open');
+}
+document.getElementById('viewReportCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('viewReportModal').classList.remove('open');
+});
+document.getElementById('viewReportEditBtn').addEventListener('click', ()=>{
+  const reportId = document.getElementById('viewReportModal').dataset.reportId;
+  document.getElementById('viewReportModal').classList.remove('open');
+  editCuttingReport(reportId);
+});
 
 async function editCuttingReport(reportId){
   const report = DATA.reports.find(r=>r.id===reportId);
