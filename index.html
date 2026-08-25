@@ -601,7 +601,8 @@
     <h2 style="font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber-bright);margin:0 0 12px;">Cutting Report <span id="viewReportIdLabel"></span></h2>
     <div id="viewReportBody" style="font-size:13.5px;color:var(--cream);line-height:1.6;"></div>
     <div class="btn-row" style="margin-top:16px;">
-      <button class="btn danger" id="viewReportEditBtn">Edit This Report</button>
+      <button class="btn secondary" id="viewReportEditBtn">Edit This Report</button>
+      <button class="btn danger" id="viewReportDeleteBtn">Delete This Report</button>
       <button class="btn secondary" id="viewReportCloseBtn">Close</button>
     </div>
   </div>
@@ -1439,7 +1440,7 @@ function renderCuttingHistory(){
     return;
   }
   wrap.innerHTML = `<table><thead><tr>
-      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Waste</th><th>Sync</th><th>Status</th>
+      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Waste</th><th>Sync</th><th></th>
     </tr></thead><tbody>` +
     reports.map(r=>`<tr>
       <td style="font-family:var(--mono);">${escapeHtml(r.bundleId)}</td>
@@ -1451,9 +1452,7 @@ function renderCuttingHistory(){
       <td>${r.damagedQty||0}</td>
       <td>${r.wasteQty||0}</td>
       <td><span class="sync-chip ${r.synced?'synced':'pending'}">${r.synced?'Synced':'Pending'}</span></td>
-      <td>${r.voided
-          ? '<span class="status-pill cut">VOIDED</span>'
-          : `<button type="button" class="btn secondary" style="padding:6px 12px;min-height:auto;font-size:11px;" data-view-report="${escapeHtml(r.id)}">View/Edit</button>`}</td>
+      <td><button type="button" class="btn secondary" style="padding:6px 12px;min-height:auto;font-size:11px;" data-view-report="${escapeHtml(r.id)}">View/Edit</button></td>
     </tr>`).join('') + '</tbody></table>';
   wrap.querySelectorAll('[data-view-report]').forEach(btn=>{
     btn.addEventListener('click', ()=> viewCuttingReport(btn.dataset.viewReport));
@@ -1492,33 +1491,50 @@ document.getElementById('viewReportEditBtn').addEventListener('click', ()=>{
   document.getElementById('viewReportModal').classList.remove('open');
   editCuttingReport(reportId);
 });
+document.getElementById('viewReportDeleteBtn').addEventListener('click', ()=>{
+  const reportId = document.getElementById('viewReportModal').dataset.reportId;
+  document.getElementById('viewReportModal').classList.remove('open');
+  deleteCuttingReportRecord(reportId);
+});
 
-async function editCuttingReport(reportId){
-  const report = DATA.reports.find(r=>r.id===reportId);
-  if(!report || report.voided) return;
-
+async function checkReportDeletable(report){
   if(!report.synced){
-    toast('This report has not finished syncing to the office yet - wait for it to sync before editing.', true);
-    return;
+    toast('This report has not finished syncing to the office yet - wait for it to sync first.', true);
+    return null;
   }
   if(!syncConfigured() || !navigator.onLine){
-    toast('Editing needs a live connection to the office - try again when online.', true);
-    return;
+    toast('This needs a live connection to the office - try again when online.', true);
+    return null;
   }
   const balanceIds = report.balanceBundleIds || (report.balanceBundleId ? [report.balanceBundleId] : []);
   for(const bid of balanceIds){
     const bal = findBundle(bid);
     if(bal && bal.status !== 'in_stock'){
-      toast('Cannot edit: '+bid+' has already been used ('+bal.status+'). That report must be corrected first.', true);
-      return;
+      toast('Cannot proceed: '+bid+' has already been used ('+bal.status+'). That report must be corrected first.', true);
+      return null;
     }
   }
-  const ok = window.confirm('Edit this cutting report for '+report.bundleId+'? The current entry will be voided and the details reloaded here for you to correct and save again. This cannot be undone.');
-  if(!ok) return;
+  return balanceIds;
+}
+
+// Deletes the report's rows from the Sheet entirely (CuttingReportLines, and
+// consequently DamagedPieces/WastePieces since those are just filtered views
+// of it), reverts the bundle to in-stock, and removes any balance bundle it
+// created. Returns true on success so callers can decide what happens next.
+async function deleteCuttingReportRecord(reportId, skipConfirm){
+  const report = DATA.reports.find(r=>r.id===reportId);
+  if(!report) return false;
+  const balanceIds = await checkReportDeletable(report);
+  if(balanceIds === null) return false;
+
+  if(!skipConfirm){
+    const ok = window.confirm('Delete this cutting report for '+report.bundleId+'? The bundle will go back in stock and any balance bundle it created will be removed. This cannot be undone.');
+    if(!ok) return false;
+  }
 
   try{
-    await apiPost({action:'voidReport', reportId: report.id, bundleId: report.bundleId, balanceBundleIds: balanceIds});
-    report.voided = true;
+    await apiPost({action:'deleteReport', reportId: report.id, bundleId: report.bundleId, balanceBundleIds: balanceIds});
+    DATA.reports = DATA.reports.filter(r=>r.id!==reportId);
     const bundle = findBundle(report.bundleId);
     if(bundle) bundle.status = 'in_stock';
     if(balanceIds.length){
@@ -1529,33 +1545,49 @@ async function editCuttingReport(reportId){
     renderBundleList();
     populateBundleSelect();
     renderLedger();
-
-    // Jump to Cutting Report and refill the form with the voided report's
-    // details, so correcting a mistake means adjusting a few fields rather
-    // than re-entering everything from scratch.
-    document.querySelector('[data-tab="cutting"]').click();
-    selectBundleForCutting(report.bundleId);
-    document.getElementById('cr-station').value = report.station || '';
-    if(report.date){
-      const parts = String(report.date).split('-');
-      if(parts.length===3){
-        document.getElementById('cr-date-year').value = parts[0];
-        document.getElementById('cr-date-month').value = parts[1];
-        document.getElementById('cr-date-day').value = parts[2];
-      }
-    }
-    document.getElementById('cr-cut-rows').innerHTML = '';
-    cutRowCount = 0;
-    if(report.cuts && report.cuts.length){
-      report.cuts.forEach(cut=> addCutRow(cut));
-    } else {
-      addCutRow();
-    }
-    updateTally();
-    toast('Report voided - correct the details below and save again.');
+    if(!skipConfirm) toast('Report deleted - '+report.bundleId+' is back in stock.');
+    return true;
   }catch(err){
-    toast('Could not edit report: '+err.message, true);
+    toast('Could not delete report: '+err.message, true);
+    return false;
   }
+}
+
+async function editCuttingReport(reportId){
+  const report = DATA.reports.find(r=>r.id===reportId);
+  if(!report) return;
+  // Snapshot the details before the record is deleted out from under us.
+  const snapshot = {bundleId: report.bundleId, station: report.station, date: report.date, cuts: report.cuts};
+
+  const ok = window.confirm('Edit this cutting report for '+report.bundleId+'? The current entry will be deleted and the details reloaded here for you to correct and save again. This cannot be undone.');
+  if(!ok) return;
+
+  const deleted = await deleteCuttingReportRecord(reportId, true);
+  if(!deleted) return;
+
+  // Jump to Cutting Report and refill the form with the deleted report's
+  // details, so correcting a mistake means adjusting a few fields rather
+  // than re-entering everything from scratch.
+  document.querySelector('[data-tab="cutting"]').click();
+  selectBundleForCutting(snapshot.bundleId);
+  document.getElementById('cr-station').value = snapshot.station || '';
+  if(snapshot.date){
+    const parts = String(snapshot.date).split('-');
+    if(parts.length===3){
+      document.getElementById('cr-date-year').value = parts[0];
+      document.getElementById('cr-date-month').value = parts[1];
+      document.getElementById('cr-date-day').value = parts[2];
+    }
+  }
+  document.getElementById('cr-cut-rows').innerHTML = '';
+  cutRowCount = 0;
+  if(snapshot.cuts && snapshot.cuts.length){
+    snapshot.cuts.forEach(cut=> addCutRow(cut));
+  } else {
+    addCutRow();
+  }
+  updateTally();
+  toast('Report deleted - correct the details below and save again.');
 }
 
 /* ================= SALES TAB ================= */
@@ -2150,21 +2182,19 @@ async function tryFetchReportsFromOffice(manual){
     // in CuttingReportLines has been deleted directly in the Sheet - remove it
     // here too. Note: a manual sheet deletion like this does NOT automatically
     // revert the bundle's status or remove its balance bundles from
-    // MasterBundles - only the Void button on the iPad does that cleanly. This
-    // just keeps the iPad's history list matching what's actually in the Sheet.
+    // MasterBundles - only the Delete button on the iPad does that cleanly.
+    // This just keeps the iPad's history list matching what's actually in the
+    // Sheet.
     const removedIds = DATA.reports.filter(r => r.synced && !remoteById[r.id]).map(r=>r.id);
     if(removedIds.length){
       DATA.reports = DATA.reports.filter(r => !removedIds.includes(r.id));
     }
 
-    // Pick up voids (or edits) that happened from another device or directly
-    // in the Sheet, and bring in any report created on a different iPad.
+    // Bring in any report created on a different iPad.
     let addedCount = 0;
     remoteReports.forEach(remote=>{
       const local = DATA.reports.find(r=>r.id===remote.id);
-      if(local){
-        if(remote.voided && !local.voided) local.voided = true;
-      } else {
+      if(!local){
         const srcBundle = findBundle(remote.bundleId);
         DATA.reports.push({...remote, originalCount: (srcBundle ? srcBundle.pieceCount : remote.totalCut), cuts: [], synced:true});
         addedCount++;
