@@ -339,6 +339,9 @@
     <div class="panel">
       <h2>Master Bundles</h2>
       <div class="btn-row" style="margin-bottom:12px;">
+        <button type="button" class="btn secondary" id="mb-refresh-btn">Refresh from Office</button>
+      </div>
+      <div class="btn-row" style="margin-bottom:12px;">
         <button type="button" class="btn secondary" id="mb-select-all-btn">Select All</button>
         <button type="button" class="btn secondary" id="mb-select-none-btn">Select None</button>
         <button type="button" class="btn" id="mb-print-selected-btn">Print Selected Tags (<span id="mb-selected-count">0</span>)</button>
@@ -704,14 +707,24 @@ function toast(msg, isError){
   clearTimeout(toast._tm);
   toast._tm = setTimeout(()=>{ t.className='toast'; }, 3200);
 }
+function nextBundleSeq(){
+  // A single number that keeps climbing across every bundle ever created -
+  // the MMDD in the ID is just a date label, it doesn't reset this count.
+  const existing = DATA.bundles
+    .map(b => {
+      const parts = b.id.split('-');
+      return (parts.length === 3 && parts[0] === 'MB') ? parseInt(parts[2], 10) : NaN;
+    })
+    .filter(n => !isNaN(n));
+  if(existing.length === 0) return 100100;
+  return Math.max(...existing) + 1;
+}
 function genMasterId(){
   const now = new Date();
   const mo = String(now.getMonth()+1).padStart(2,'0');
   const dd = String(now.getDate()).padStart(2,'0');
-  const hh = String(now.getHours()).padStart(2,'0');
-  const mi = String(now.getMinutes()).padStart(2,'0');
-  const ss = String(now.getSeconds()).padStart(2,'0');
-  return 'MB-' + mo+dd + '-' + hh+mi+ss;
+  const mmdd = mo+dd;
+  return 'MB-' + mmdd + '-' + nextBundleSeq();
 }
 function genChildId(parentId){
   const siblings = DATA.bundles.filter(b => b.parentId === parentId);
@@ -918,7 +931,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.querySelectorAll('.tab-panel').forEach(p=>p.style.display='none');
     btn.classList.add('active');
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
-    if(btn.dataset.tab==='bundles') renderBundleList();
+    if(btn.dataset.tab==='bundles'){ renderBundleList(); tryFetchBundlesFromOffice(); }
     if(btn.dataset.tab==='cutting'){ populateBundleSelect(); renderCuttingHistory(); tryFetchBundlesFromOffice(); tryFetchReportsFromOffice(); }
     if(btn.dataset.tab==='sales'){ populateSaleBundleSelect(); renderSalesHistory(); tryFetchBundlesFromOffice(); tryFetchSalesFromOffice(); }
     if(btn.dataset.tab==='ledger') renderLedger();
@@ -942,12 +955,16 @@ function renderBundleList(){
       ${bundleTagHtml(b)}
       <div class="btn-row" style="margin-top:6px;">
         <button type="button" class="btn secondary" style="padding:8px 14px;min-height:auto;font-size:12px;" data-edit-bundle="${escapeHtml(b.id)}">Edit</button>
+        <button type="button" class="btn danger" style="padding:8px 14px;min-height:auto;font-size:12px;" data-remove-local-bundle="${escapeHtml(b.id)}">Remove from This iPad</button>
       </div>
     </div>
   </div>`).join('');
   masters.forEach(b=>renderTagQR(b));
   wrap.querySelectorAll('[data-edit-bundle]').forEach(btn=>{
     btn.addEventListener('click', ()=> openEditBundleModal(btn.dataset.editBundle));
+  });
+  wrap.querySelectorAll('[data-remove-local-bundle]').forEach(btn=>{
+    btn.addEventListener('click', ()=> removeLocalBundle(btn.dataset.removeLocalBundle));
   });
   wrap.querySelectorAll('.mb-select-checkbox').forEach(cb=>{
     cb.addEventListener('change', ()=>{
@@ -961,6 +978,24 @@ function renderBundleList(){
 function updateSelectedPrintCount(){
   document.getElementById('mb-selected-count').textContent = selectedForPrint.size;
 }
+function removeLocalBundle(bundleId){
+  const b = findBundle(bundleId);
+  if(!b) return;
+  const ok = window.confirm('Remove '+bundleId+' from this iPad only?\n\nUse this ONLY if you have already deleted it from MasterBundles in the Google Sheet. This does not touch the Sheet - if the row is still there, it may come back the next time this iPad syncs.');
+  if(!ok) return;
+  DATA.bundles = DATA.bundles.filter(x=>x.id!==bundleId);
+  selectedForPrint.delete(bundleId);
+  saveData(DATA);
+  renderBundleList();
+  populateBundleSelect();
+  populateSaleBundleSelect();
+  renderLedger();
+  toast(bundleId+' removed from this iPad.');
+}
+document.getElementById('mb-refresh-btn').addEventListener('click', async ()=>{
+  toast('Refreshing from office...');
+  await tryFetchBundlesFromOffice(true);
+});
 document.getElementById('mb-select-all-btn').addEventListener('click', ()=>{
   DATA.bundles.filter(b=>b.type==='master').forEach(b=>selectedForPrint.add(b.id));
   renderBundleList();
@@ -1940,7 +1975,10 @@ function showBundleDetail(id){
 
   document.getElementById('lg-detail').innerHTML = `
     ${bundleTagHtml(b)}
-    ${b.type==='master' ? `<div class="btn-row" style="margin-top:6px;"><button type="button" class="btn secondary" id="lg-edit-bundle-btn">Edit</button></div>` : ''}
+    <div class="btn-row" style="margin-top:6px;">
+      ${b.type==='master' ? `<button type="button" class="btn secondary" id="lg-edit-bundle-btn">Edit</button>` : ''}
+      <button type="button" class="btn danger" id="lg-remove-bundle-btn">Remove from This iPad</button>
+    </div>
     <div class="section-note" style="margin-top:14px;">
       <div class="lineage">Lineage: ${lineageHtml || escapeHtml(b.id)}</div>
     </div>
@@ -1950,6 +1988,10 @@ function showBundleDetail(id){
   if(b.type==='master'){
     document.getElementById('lg-edit-bundle-btn').addEventListener('click', ()=> openEditBundleModal(b.id));
   }
+  document.getElementById('lg-remove-bundle-btn').addEventListener('click', ()=>{
+    removeLocalBundle(b.id);
+    panel.style.display='none';
+  });
   renderTagQR(b);
   panel.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
