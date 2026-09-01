@@ -955,16 +955,12 @@ function renderBundleList(){
       ${bundleTagHtml(b)}
       <div class="btn-row" style="margin-top:6px;">
         <button type="button" class="btn secondary" style="padding:8px 14px;min-height:auto;font-size:12px;" data-edit-bundle="${escapeHtml(b.id)}">Edit</button>
-        <button type="button" class="btn danger" style="padding:8px 14px;min-height:auto;font-size:12px;" data-remove-local-bundle="${escapeHtml(b.id)}">Remove from This iPad</button>
       </div>
     </div>
   </div>`).join('');
   masters.forEach(b=>renderTagQR(b));
   wrap.querySelectorAll('[data-edit-bundle]').forEach(btn=>{
     btn.addEventListener('click', ()=> openEditBundleModal(btn.dataset.editBundle));
-  });
-  wrap.querySelectorAll('[data-remove-local-bundle]').forEach(btn=>{
-    btn.addEventListener('click', ()=> removeLocalBundle(btn.dataset.removeLocalBundle));
   });
   wrap.querySelectorAll('.mb-select-checkbox').forEach(cb=>{
     cb.addEventListener('change', ()=>{
@@ -977,20 +973,6 @@ function renderBundleList(){
 }
 function updateSelectedPrintCount(){
   document.getElementById('mb-selected-count').textContent = selectedForPrint.size;
-}
-function removeLocalBundle(bundleId){
-  const b = findBundle(bundleId);
-  if(!b) return;
-  const ok = window.confirm('Remove '+bundleId+' from this iPad only?\n\nUse this ONLY if you have already deleted it from MasterBundles in the Google Sheet. This does not touch the Sheet - if the row is still there, it may come back the next time this iPad syncs.');
-  if(!ok) return;
-  DATA.bundles = DATA.bundles.filter(x=>x.id!==bundleId);
-  selectedForPrint.delete(bundleId);
-  saveData(DATA);
-  renderBundleList();
-  populateBundleSelect();
-  populateSaleBundleSelect();
-  renderLedger();
-  toast(bundleId+' removed from this iPad.');
 }
 document.getElementById('mb-refresh-btn').addEventListener('click', async ()=>{
   toast('Refreshing from office...');
@@ -1975,10 +1957,7 @@ function showBundleDetail(id){
 
   document.getElementById('lg-detail').innerHTML = `
     ${bundleTagHtml(b)}
-    <div class="btn-row" style="margin-top:6px;">
-      ${b.type==='master' ? `<button type="button" class="btn secondary" id="lg-edit-bundle-btn">Edit</button>` : ''}
-      <button type="button" class="btn danger" id="lg-remove-bundle-btn">Remove from This iPad</button>
-    </div>
+    ${b.type==='master' ? `<div class="btn-row" style="margin-top:6px;"><button type="button" class="btn secondary" id="lg-edit-bundle-btn">Edit</button></div>` : ''}
     <div class="section-note" style="margin-top:14px;">
       <div class="lineage">Lineage: ${lineageHtml || escapeHtml(b.id)}</div>
     </div>
@@ -1988,10 +1967,6 @@ function showBundleDetail(id){
   if(b.type==='master'){
     document.getElementById('lg-edit-bundle-btn').addEventListener('click', ()=> openEditBundleModal(b.id));
   }
-  document.getElementById('lg-remove-bundle-btn').addEventListener('click', ()=>{
-    removeLocalBundle(b.id);
-    panel.style.display='none';
-  });
   renderTagQR(b);
   panel.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
@@ -2185,11 +2160,18 @@ async function tryFetchBundlesFromOffice(manual){
         DATA.bundles.push({...remote, status: remote.status || 'unknown', synced:true});
       }
     });
-    // A bundle that was previously confirmed synced but no longer appears in the
-    // Sheet has been deleted there on purpose - remove it here too. Bundles still
-    // waiting in the pending queue (never confirmed synced) are left alone, since
-    // "not in the Sheet yet" is different from "deleted from the Sheet".
-    const removedIds = DATA.bundles.filter(b => b.synced && !remoteIds.has(b.id)).map(b=>b.id);
+    // A bundle that no longer appears in the Sheet has been deleted there on
+    // purpose - remove it here too. The only bundles left alone are ones
+    // actually sitting in the pending sync queue right now (a genuine
+    // not-yet-uploaded local change) - checking the real queue instead of a
+    // "was this ever confirmed synced" flag means a bundle can never get
+    // permanently stuck and immune to deletion if something once caused it to
+    // fail syncing.
+    const pendingQueue = loadQueue();
+    const pendingBundleIds = new Set(
+      pendingQueue.filter(q=>q.type==='bundle' || q.type==='editBundle').map(q=>q.payload.id)
+    );
+    const removedIds = DATA.bundles.filter(b => !remoteIds.has(b.id) && !pendingBundleIds.has(b.id)).map(b=>b.id);
     if(removedIds.length){
       DATA.bundles = DATA.bundles.filter(b => !removedIds.includes(b.id));
     }
@@ -2220,14 +2202,22 @@ async function tryFetchReportsFromOffice(manual){
     const remoteById = {};
     remoteReports.forEach(r=>{ remoteById[r.id] = r; });
 
-    // A report that was previously confirmed synced but no longer has any rows
-    // in CuttingReportLines has been deleted directly in the Sheet - remove it
-    // here too. Note: a manual sheet deletion like this does NOT automatically
-    // revert the bundle's status or remove its balance bundles from
-    // MasterBundles - only the Delete button on the iPad does that cleanly.
-    // This just keeps the iPad's history list matching what's actually in the
-    // Sheet.
-    const removedIds = DATA.reports.filter(r => r.synced && !remoteById[r.id]).map(r=>r.id);
+    // A report that no longer has any rows in CuttingReportLines has been
+    // deleted directly in the Sheet - remove it here too. The only reports
+    // left alone are ones actually sitting in the pending sync queue right
+    // now (a genuine not-yet-uploaded local change) - checking the real queue
+    // instead of a "was this ever confirmed synced" flag means a report can
+    // never get permanently stuck and immune to deletion if something once
+    // caused it to fail syncing. Note: a manual sheet deletion like this does
+    // NOT automatically revert the bundle's status or remove its balance
+    // bundles from MasterBundles - only the Delete button on the iPad does
+    // that cleanly. This just keeps the iPad's history list matching what's
+    // actually in the Sheet.
+    const pendingQueue = loadQueue();
+    const pendingReportIds = new Set(
+      pendingQueue.filter(q=>q.type==='report').map(q=>q.payload.report.id)
+    );
+    const removedIds = DATA.reports.filter(r => !remoteById[r.id] && !pendingReportIds.has(r.id)).map(r=>r.id);
     if(removedIds.length){
       DATA.reports = DATA.reports.filter(r => !removedIds.includes(r.id));
     }
@@ -2266,14 +2256,20 @@ async function tryFetchSalesFromOffice(manual){
     const remoteSales = data.sales || [];
     const remoteIds = new Set(remoteSales.map(s=>s.id));
 
-    // A sale that was previously confirmed synced but no longer exists in the
-    // Sheet has been deleted there directly - remove it here too. Note: a
-    // manual sheet deletion like this does NOT automatically restore the
-    // bundle's piece count - only the Delete button on the iPad does that in
-    // one step. If someone deletes a Sales row by hand, also correct the
+    // A sale that no longer exists in the Sheet has been deleted there
+    // directly - remove it here too. The only sales left alone are ones
+    // actually sitting in the pending sync queue right now, checked against
+    // the real queue rather than a flag that could get permanently stuck.
+    // Note: a manual sheet deletion like this does NOT automatically restore
+    // the bundle's piece count - only the Delete button on the iPad does that
+    // in one step. If someone deletes a Sales row by hand, also correct the
     // PieceCount on MasterBundles by hand, and it'll sync to every iPad
     // normally on the next bundle refresh.
-    const removedIds = DATA.sales.filter(s => s.synced && !remoteIds.has(s.id)).map(s=>s.id);
+    const pendingQueue = loadQueue();
+    const pendingSaleIds = new Set(
+      pendingQueue.filter(q=>q.type==='sale').map(q=>q.payload.sale.id)
+    );
+    const removedIds = DATA.sales.filter(s => !remoteIds.has(s.id) && !pendingSaleIds.has(s.id)).map(s=>s.id);
     if(removedIds.length){
       DATA.sales = DATA.sales.filter(s => !removedIds.includes(s.id));
     }
