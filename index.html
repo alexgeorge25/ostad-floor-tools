@@ -1541,6 +1541,39 @@ async function checkReportDeletable(report){
 async function deleteCuttingReportRecord(reportId, skipConfirm){
   const report = DATA.reports.find(r=>r.id===reportId);
   if(!report) return false;
+
+  // A report that never successfully synced was never written to the Sheet
+  // in the first place - there's nothing there to keep in sync, so it's safe
+  // to just remove it from this device directly, no server call needed. This
+  // is what actually resolves a report that's permanently stuck "Pending"
+  // (which would otherwise be undeletable, since the normal delete path
+  // requires a synced report to safely reverse on the server).
+  if(!report.synced){
+    if(!skipConfirm){
+      const ok = window.confirm('This entry for '+report.bundleId+' never finished syncing to the office, so nothing there needs to change. Remove it from this iPad and put the bundle back in stock?');
+      if(!ok) return false;
+    }
+    DATA.reports = DATA.reports.filter(r=>r.id!==reportId);
+    const bundle = findBundle(report.bundleId);
+    if(bundle) bundle.status = 'in_stock';
+    const localBalanceIds = report.balanceBundleIds || (report.balanceBundleId ? [report.balanceBundleId] : []);
+    if(localBalanceIds.length){
+      DATA.bundles = DATA.bundles.filter(b=>!localBalanceIds.includes(b.id));
+    }
+    // Also clear it out of the pending sync queue so it stops retrying forever.
+    const queue = loadQueue().filter(function(q){
+      return !(q.type==='report' && q.payload && q.payload.report && q.payload.report.id===reportId);
+    });
+    saveQueue(queue);
+    saveData(DATA);
+    renderCuttingHistory();
+    renderBundleList();
+    populateBundleSelect();
+    renderLedger();
+    if(!skipConfirm) toast('Removed - '+report.bundleId+' is back in stock.');
+    return true;
+  }
+
   const balanceIds = await checkReportDeletable(report);
   if(balanceIds === null) return false;
 
