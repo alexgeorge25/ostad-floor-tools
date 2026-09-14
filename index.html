@@ -2260,8 +2260,12 @@ async function tryFetchReportsFromOffice(manual){
     remoteReports.forEach(remote=>{
       const local = DATA.reports.find(r=>r.id===remote.id);
       if(!local){
+        // Prefer the office's own recorded originalCount (accurate, tied to
+        // that specific report) - fall back to the current bundle's piece
+        // count only for older reports saved before this was tracked.
         const srcBundle = findBundle(remote.bundleId);
-        DATA.reports.push({...remote, originalCount: (srcBundle ? srcBundle.pieceCount : remote.totalCut), cuts: [], synced:true});
+        const originalCount = remote.originalCount || (srcBundle ? srcBundle.pieceCount : remote.totalCut);
+        DATA.reports.push({...remote, originalCount: originalCount, cuts: [], synced:true});
         addedCount++;
       }
     });
