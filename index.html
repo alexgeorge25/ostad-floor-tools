@@ -377,7 +377,20 @@
     <div class="panel" id="cr-form-panel" style="display:none;">
       <h2>2. Log Cutting Details</h2>
 
-      <label>Cutting Station</label>
+      <label>Pieces Taken From This Bundle</label>
+      <p class="helptext" id="cr-taken-available"></p>
+      <div class="stepper" style="height:auto;">
+        <button type="button" data-target="cr-taken" data-step="-100" style="width:auto;padding:0 8px;font-size:13px;">-100</button>
+        <button type="button" data-target="cr-taken" data-step="-10" style="width:auto;padding:0 8px;font-size:13px;">-10</button>
+        <button type="button" data-target="cr-taken" data-step="-1" style="width:auto;padding:0 8px;">-1</button>
+        <div class="val" id="cr-taken-val">0</div>
+        <button type="button" data-target="cr-taken" data-step="1" style="width:auto;padding:0 8px;">+1</button>
+        <button type="button" data-target="cr-taken" data-step="10" style="width:auto;padding:0 8px;font-size:13px;">+10</button>
+        <button type="button" data-target="cr-taken" data-step="100" style="width:auto;padding:0 8px;font-size:13px;">+100</button>
+      </div>
+      <div id="cr-remainder-note" class="section-note"></div>
+
+      <label style="margin-top:10px;">Cutting Station</label>
       <select id="cr-station"><option value="">- Select station -</option></select>
 
       <label>Date (DD/MM/YYYY)</label>
@@ -387,7 +400,7 @@
         <select id="cr-date-year"></select>
       </div>
 
-      <label style="margin-top:8px;">Cut Pieces</label>
+      <label style="margin-top:8px;">Cut Pieces (what the taken pieces turn into)</label>
       <div id="cr-cut-rows"></div>
       <div class="btn-row">
         <button class="btn secondary" id="cr-add-row-btn">+ Add Cut Size</button>
@@ -395,7 +408,7 @@
 
       <div class="tally-wrap">
         <div>
-          <div style="font-family:var(--mono);font-size:11px;color:var(--cream-dim);text-transform:uppercase;letter-spacing:.06em;">Tally vs. original count</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--cream-dim);text-transform:uppercase;letter-spacing:.06em;">Output logged (informational - cutting one piece into several is normal)</div>
           <div class="tally-marks" id="cr-tally-marks">-</div>
         </div>
         <div class="tally-verdict" id="cr-tally-verdict">No cuts logged</div>
@@ -848,6 +861,7 @@ function updateStepperDisplay(target){
   if(el) el.textContent = stepperState[target]||0;
   if(target.startsWith('cutqty-')) updateTally();
   if(target==='sl-qty') updateSaleRemaining();
+  if(target==='cr-taken') updateRemainderNote();
 }
 function getStepperValue(target){ return stepperState[target]||0; }
 function setStepperValue(target, val){ stepperState[target] = Math.max(0, val); updateStepperDisplay(target); }
@@ -1218,10 +1232,27 @@ function selectBundleForCutting(id){
   document.getElementById('cr-form-panel').style.display='block';
   setDateSelectorsToToday();
   document.getElementById('cr-station').value='';
+  document.getElementById('cr-taken-available').textContent = b.pieceCount+' pcs currently available in this bundle.';
+  setStepperValue('cr-taken', b.pieceCount); // default to taking the whole bundle, adjust down if only part is being used
+  updateRemainderNote();
   document.getElementById('cr-cut-rows').innerHTML='';
   cutRowCount = 0;
   addCutRow();
   updateTally();
+}
+
+function updateRemainderNote(){
+  if(!currentCutBundle) return;
+  const taken = getStepperValue('cr-taken');
+  const remainder = currentCutBundle.pieceCount - taken;
+  const noteEl = document.getElementById('cr-remainder-note');
+  if(taken <= 0){
+    noteEl.textContent = 'Set how many pieces are actually being taken for this cutting session.';
+  } else if(remainder <= 0){
+    noteEl.textContent = 'Taking all '+currentCutBundle.pieceCount+' pieces - this bundle will be fully used up.';
+  } else {
+    noteEl.textContent = remainder+' untouched piece(s) will be split off into a new bundle (same size as this one) and stay in stock.';
+  }
 }
 
 function addCutRow(prefill){
@@ -1328,21 +1359,18 @@ function updateTally(){
   if(!currentCutBundle) return;
   const rows = getCutRows();
   const total = rows.reduce((s,r)=>s+r.qty,0);
-  const target = currentCutBundle.pieceCount;
-  document.getElementById('cr-tally-marks').innerHTML = renderTallyMarks(total) + ' / ' + target;
+  const taken = getStepperValue('cr-taken');
+  document.getElementById('cr-tally-marks').innerHTML = renderTallyMarks(total) + ' output pcs (from ' + taken + ' taken)';
   const verdictEl = document.getElementById('cr-tally-verdict');
   if(total === 0){
-    verdictEl.textContent = 'No cuts logged';
+    verdictEl.textContent = 'No cuts logged yet';
     verdictEl.className = 'tally-verdict under';
-  } else if(total === target){
-    verdictEl.textContent = 'Matches bundle count';
+  } else if(taken > 0 && total >= taken){
+    verdictEl.textContent = (total/taken).toFixed(1)+'x pieces per piece taken';
     verdictEl.className = 'tally-verdict match';
-  } else if(total < target){
-    verdictEl.textContent = (target-total)+' pieces unaccounted';
-    verdictEl.className = 'tally-verdict under';
   } else {
-    verdictEl.textContent = (total-target)+' pieces over original count';
-    verdictEl.className = 'tally-verdict over';
+    verdictEl.textContent = 'Logged output is less than pieces taken - check nothing was missed';
+    verdictEl.className = 'tally-verdict under';
   }
 }
 
@@ -1356,6 +1384,9 @@ document.getElementById('cr-cancel-btn').addEventListener('click', ()=>{
 document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
   if(!requireSessionPerson()) return;
   if(!currentCutBundle){ toast('Select a bundle first.', true); return; }
+  const piecesTaken = getStepperValue('cr-taken');
+  if(!piecesTaken || piecesTaken < 1){ toast('Set how many pieces are being taken from this bundle.', true); return; }
+  if(piecesTaken > currentCutBundle.pieceCount){ toast('Cannot take more pieces than are available ('+currentCutBundle.pieceCount+').', true); return; }
   const rows = getCutRows();
   if(rows.length===0){ toast('Set at least one cut size with a quantity above zero.', true); return; }
   if(rows.some(r=>!r.size)){ toast('Each cut row needs thickness, width, and length selected.', true); return; }
@@ -1376,17 +1407,43 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
     station, date, notes:'',
     cuts: rows,
     totalCut, productionQty, balanceQty, damagedQty, wasteQty,
-    originalCount: currentCutBundle.pieceCount,
+    originalCount: piecesTaken, // pieces actually taken from the bundle for this session - what gets reported as BundlePiecesUsed
     createdAt: todayISO(),
     enteredBy: SESSION_PERSON,
     synced: false
   };
 
+  // The original bundle is always fully accounted for once a cutting report
+  // is run against it - the pieces taken go through the cuts logged below,
+  // and any untouched remainder (if only part of the bundle was taken) spins
+  // off into its own new bundle at the SAME size, so it stays trackable stock
+  // rather than pieces the system just loses sight of.
   currentCutBundle.status = 'cut';
+  const untouchedRemainder = currentCutBundle.pieceCount - piecesTaken;
+
+  const balanceBundles = [];
+
+  if(untouchedRemainder > 0){
+    const remainderChild = {
+      id: genChildId(currentCutBundle.id),
+      type: 'child',
+      parentId: currentCutBundle.id,
+      dimension: currentCutBundle.dimension,
+      thickness: currentCutBundle.thickness, width: currentCutBundle.width, length: currentCutBundle.length,
+      pieceCount: untouchedRemainder,
+      containerRef: currentCutBundle.containerRef,
+      notes: 'Untouched remainder - not taken in cutting report '+report.id,
+      status: 'in_stock',
+      createdAt: todayISO(),
+      enteredBy: SESSION_PERSON,
+      synced: false
+    };
+    DATA.bundles.push(remainderChild);
+    balanceBundles.push(remainderChild);
+  }
 
   // Each distinct size going to "balance" gets its own properly-dimensioned
   // child bundle, rather than lumping every leftover size into one "mixed" bundle.
-  const balanceBundles = [];
   const groups = {};
   rows.filter(r=>r.destination==='balance').forEach(r=>{
     const key = r.cutThickness+'|'+r.cutWidth+'|'+r.cutLength;
@@ -1444,7 +1501,7 @@ function renderBalanceBundlePanel(balanceBundles, parentBundleId){
   }
   panel.style.display='block';
   document.getElementById('cr-balance-note').textContent =
-    balanceBundles.length+' balance bundle(s) created automatically, linked back to '+parentBundleId+'. Print each tag and attach it to the matching physical offcut bundle before it goes back into stock.';
+    balanceBundles.length+' new bundle(s) created automatically, linked back to '+parentBundleId+'. Print each tag and attach it to the matching physical bundle before it goes back into stock.';
   document.getElementById('cr-balance-tag').innerHTML = balanceBundles.map(b=>`<div style="margin-bottom:12px;">${bundleTagHtml(b)}</div>`).join('');
   balanceBundles.forEach(renderTagQR);
 }
@@ -1457,13 +1514,13 @@ function renderCuttingHistory(){
     return;
   }
   wrap.innerHTML = `<table><thead><tr>
-      <th>Bundle</th><th>Station</th><th>Date</th><th>Cut / Original</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Waste</th><th>Sync</th><th></th>
+      <th>Bundle</th><th>Station</th><th>Date</th><th>Output / Taken</th><th>Production</th><th>Balance</th><th>Damaged</th><th>Waste</th><th>Sync</th><th></th>
     </tr></thead><tbody>` +
     reports.map(r=>`<tr>
       <td style="font-family:var(--mono);">${escapeHtml(r.bundleId)}</td>
       <td>${escapeHtml(r.station)}</td>
       <td>${fmtDate(r.date)}</td>
-      <td>${r.totalCut} / ${r.originalCount}</td>
+      <td>${r.totalCut} / taken ${r.originalCount}</td>
       <td>${r.productionQty}</td>
       <td>${r.balanceQty}${(r.balanceBundleIds&&r.balanceBundleIds.length) ? ' -> '+r.balanceBundleIds.map(escapeHtml).join(', ') : ''}</td>
       <td>${r.damagedQty||0}</td>
@@ -1494,7 +1551,8 @@ function viewCuttingReport(reportId){
     <div class="row" style="margin-bottom:4px;"><b>Station:</b> ${escapeHtml(report.station)}</div>
     <div class="row" style="margin-bottom:4px;"><b>Date:</b> ${fmtDate(report.date)}</div>
     <div class="row" style="margin-bottom:4px;"><b>Entered by:</b> ${escapeHtml(report.enteredBy||'-')}</div>
-    <div class="row" style="margin-bottom:4px;"><b>Totals:</b> ${report.totalCut} / ${report.originalCount} cut - Production ${report.productionQty}, Balance ${report.balanceQty}, Damaged ${report.damagedQty||0}, Waste ${report.wasteQty||0}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Pieces Taken From Bundle:</b> ${report.originalCount}</div>
+    <div class="row" style="margin-bottom:4px;"><b>Cut Output Logged:</b> ${report.totalCut} - Production ${report.productionQty}, Balance ${report.balanceQty}, Damaged ${report.damagedQty||0}, Waste ${report.wasteQty||0}</div>
     ${cutsHtml}
   `;
   document.getElementById('viewReportModal').dataset.reportId = reportId;
@@ -1607,7 +1665,7 @@ async function editCuttingReport(reportId){
   const report = DATA.reports.find(r=>r.id===reportId);
   if(!report) return;
   // Snapshot the details before the record is deleted out from under us.
-  const snapshot = {bundleId: report.bundleId, station: report.station, date: report.date, cuts: report.cuts};
+  const snapshot = {bundleId: report.bundleId, station: report.station, date: report.date, cuts: report.cuts, piecesTaken: report.originalCount};
 
   const ok = window.confirm('Edit this cutting report for '+report.bundleId+'? The current entry will be deleted and the details reloaded here for you to correct and save again. This cannot be undone.');
   if(!ok) return;
@@ -1620,6 +1678,9 @@ async function editCuttingReport(reportId){
   // than re-entering everything from scratch.
   document.querySelector('[data-tab="cutting"]').click();
   selectBundleForCutting(snapshot.bundleId);
+  if(snapshot.piecesTaken){
+    setStepperValue('cr-taken', snapshot.piecesTaken); // restore what was actually taken, not just default to the full bundle
+  }
   document.getElementById('cr-station').value = snapshot.station || '';
   if(snapshot.date){
     const parts = String(snapshot.date).split('-');
@@ -1995,7 +2056,7 @@ function showBundleDetail(id){
       <div class="lineage">Lineage: ${lineageHtml || escapeHtml(b.id)}</div>
     </div>
     ${childBundles.length ? `<div style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--cream-dim);">Child bundles: ${childBundles.map(c=>c.id).join(', ')}</div>` : ''}
-    ${relatedReports.length ? `<div style="margin-top:14px;"><table><thead><tr><th>Report</th><th>Station</th><th>Date</th><th>Cut/Original</th></tr></thead><tbody>${relatedReports.map(r=>`<tr><td style="font-family:var(--mono);">${escapeHtml(r.id)}</td><td>${escapeHtml(r.station)}</td><td>${fmtDate(r.date)}</td><td>${r.totalCut}/${r.originalCount}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${relatedReports.length ? `<div style="margin-top:14px;"><table><thead><tr><th>Report</th><th>Station</th><th>Date</th><th>Output / Taken</th></tr></thead><tbody>${relatedReports.map(r=>`<tr><td style="font-family:var(--mono);">${escapeHtml(r.id)}</td><td>${escapeHtml(r.station)}</td><td>${fmtDate(r.date)}</td><td>${r.totalCut} / ${r.originalCount}</td></tr>`).join('')}</tbody></table></div>` : ''}
   `;
   if(b.type==='master'){
     document.getElementById('lg-edit-bundle-btn').addEventListener('click', ()=> openEditBundleModal(b.id));
