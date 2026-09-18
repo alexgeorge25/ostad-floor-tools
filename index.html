@@ -1408,6 +1408,7 @@ document.getElementById('cr-save-btn').addEventListener('click', async ()=>{
     cuts: rows,
     totalCut, productionQty, balanceQty, damagedQty, wasteQty,
     originalCount: piecesTaken, // pieces actually taken from the bundle for this session - what gets reported as BundlePiecesUsed
+    sourceThickness: currentCutBundle.thickness, sourceWidth: currentCutBundle.width, sourceLength: currentCutBundle.length,
     createdAt: todayISO(),
     enteredBy: SESSION_PERSON,
     synced: false
@@ -2297,23 +2298,44 @@ async function tryFetchReportsFromOffice(manual){
     remoteReports.forEach(r=>{ remoteById[r.id] = r; });
 
     // A report that no longer has any rows in CuttingReportLines has been
-    // deleted directly in the Sheet - remove it here too. The only reports
-    // left alone are ones actually sitting in the pending sync queue right
-    // now (a genuine not-yet-uploaded local change) - checking the real queue
-    // instead of a "was this ever confirmed synced" flag means a report can
-    // never get permanently stuck and immune to deletion if something once
-    // caused it to fail syncing. Note: a manual sheet deletion like this does
-    // NOT automatically revert the bundle's status or remove its balance
-    // bundles from MasterBundles - only the Delete button on the iPad does
-    // that cleanly. This just keeps the iPad's history list matching what's
-    // actually in the Sheet.
+    // deleted directly in the Sheet - remove it here too, AND reverse the
+    // same side effects the in-app Delete button would have (put the bundle
+    // back in stock, remove any balance bundle it created) so a manual sheet
+    // deletion behaves consistently with deleting through the app. The only
+    // reports left alone are ones actually sitting in the pending sync queue
+    // right now (a genuine not-yet-uploaded local change) - checking the real
+    // queue instead of a "was this ever confirmed synced" flag means a report
+    // can never get permanently stuck and immune to deletion if something
+    // once caused it to fail syncing.
     const pendingQueue = loadQueue();
     const pendingReportIds = new Set(
       pendingQueue.filter(q=>q.type==='report').map(q=>q.payload.report.id)
     );
-    const removedIds = DATA.reports.filter(r => !remoteById[r.id] && !pendingReportIds.has(r.id)).map(r=>r.id);
+    const removedReports = DATA.reports.filter(r => !remoteById[r.id] && !pendingReportIds.has(r.id));
+    const skippedBundleIds = [];
+    removedReports.forEach(r=>{
+      const bundle = findBundle(r.bundleId);
+      if(bundle && bundle.status === 'cut') bundle.status = 'in_stock';
+      const balanceIds = r.balanceBundleIds || (r.balanceBundleId ? [r.balanceBundleId] : []);
+      balanceIds.forEach(bid=>{
+        const bal = findBundle(bid);
+        if(!bal) return;
+        if(bal.status === 'in_stock'){
+          DATA.bundles = DATA.bundles.filter(b=>b.id!==bid);
+        } else {
+          // It's already been used further (cut again, sold, etc.) - removing
+          // it now would orphan whatever happened to it since, so it's left
+          // alone. Flagged below so the office knows to check it by hand.
+          skippedBundleIds.push(bid);
+        }
+      });
+    });
+    const removedIds = removedReports.map(r=>r.id);
     if(removedIds.length){
       DATA.reports = DATA.reports.filter(r => !removedIds.includes(r.id));
+    }
+    if(skippedBundleIds.length){
+      toast('Note: '+skippedBundleIds.join(', ')+' already had further activity, so could not be auto-removed even though its report was deleted from the Sheet. Check it manually.', true);
     }
 
     // Bring in any report created on a different iPad.
@@ -2333,6 +2355,9 @@ async function tryFetchReportsFromOffice(manual){
 
     saveData(DATA);
     renderCuttingHistory();
+    renderBundleList();
+    populateBundleSelect();
+    renderLedger();
     if(manual){
       const parts = [];
       if(removedIds.length) parts.push(removedIds.length+' removed');
