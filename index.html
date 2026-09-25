@@ -859,7 +859,7 @@ function initStepper(target, initial){
 function updateStepperDisplay(target){
   const el = document.getElementById(target+'-val');
   if(el) el.textContent = stepperState[target]||0;
-  if(target.startsWith('cutqty-')) updateTally();
+  if(target.startsWith('cutqty-')){ updateTally(); refreshCutFromOptions(); }
   if(target==='sl-qty') updateSaleRemaining();
   if(target==='cr-taken') updateRemainderNote();
 }
@@ -1262,11 +1262,16 @@ function addCutRow(prefill){
   const div = document.createElement('div');
   div.className = 'cut-row';
   div.dataset.target = target;
+  div.dataset.seq = n;
   div.innerHTML = `
     <div class="cut-row-top">
       <label style="margin:0;">Cut size ${n}</label>
       <button type="button" class="icon-btn" title="Remove">x</button>
     </div>
+    <label>Cut From</label>
+    <select class="cut-from">
+      <option value="">Pieces taken from bundle</option>
+    </select>
     <label>Cut Thickness (mm)</label>
     <select class="cut-thickness">
       <option value="">- Select -</option>
@@ -1310,11 +1315,14 @@ function addCutRow(prefill){
       <option value="damaged">Damaged (kept, may reuse)</option>
       <option value="waste">Waste (discarded)</option>
     </select>`;
-  div.querySelector('.icon-btn').addEventListener('click', ()=>{ delete stepperState[target]; div.remove(); updateTally(); });
+  div.querySelector('.icon-btn').addEventListener('click', ()=>{ delete stepperState[target]; div.remove(); updateTally(); refreshCutFromOptions(); });
   const destSel = div.querySelector('.cut-dest');
   const forSel = div.querySelector('.cut-for');
   destSel.addEventListener('change', ()=>{ applyCutForLock(destSel, forSel); });
   applyCutForLock(destSel, forSel);
+  div.querySelector('.cut-thickness').addEventListener('change', refreshCutFromOptions);
+  div.querySelector('.cut-width').addEventListener('change', refreshCutFromOptions);
+  div.querySelector('.cut-length').addEventListener('change', refreshCutFromOptions);
   document.getElementById('cr-cut-rows').appendChild(div);
   initStepper(target, 0);
   wireStepperButtons(div);
@@ -1327,6 +1335,49 @@ function addCutRow(prefill){
     if(prefill.destination === 'production') forSel.value = prefill.forCustomer || '';
     setStepperValue(target, prefill.qty || 0);
   }
+  refreshCutFromOptions();
+  if(prefill && prefill.cutFromSeq){
+    // Restore which earlier row this was cut from, once that row's own
+    // options have been rebuilt above so the reference actually exists yet.
+    const sel = div.querySelector('.cut-from');
+    if(sel.querySelector('option[value="'+prefill.cutFromSeq+'"]')) sel.value = String(prefill.cutFromSeq);
+  }
+}
+
+// Rebuilds every row's "Cut From" dropdown so it only ever offers rows that
+// come BEFORE it and currently have a valid size and quantity - this is what
+// lets a cut reference "the leftover of an earlier cut in this same report"
+// to any depth (a cut of a cut of a cut...), not just the original bundle.
+function refreshCutFromOptions(){
+  const rows = Array.from(document.querySelectorAll('#cr-cut-rows .cut-row'));
+  rows.forEach((row, idx)=>{
+    const sel = row.querySelector('.cut-from');
+    if(!sel) return;
+    const currentVal = sel.value;
+    const priorRows = rows.slice(0, idx).filter(r=>{
+      const t = r.querySelector('.cut-thickness').value;
+      const w = r.querySelector('.cut-width').value;
+      const l = r.querySelector('.cut-length').value;
+      const qty = getStepperValue(r.dataset.target);
+      return t && w && l && qty > 0;
+    });
+    const options = ['<option value="">Pieces taken from bundle</option>'].concat(
+      priorRows.map(r=>{
+        const t = r.querySelector('.cut-thickness').value;
+        const w = r.querySelector('.cut-width').value;
+        const l = r.querySelector('.cut-length').value;
+        const qty = getStepperValue(r.dataset.target);
+        const seq = r.dataset.seq;
+        return '<option value="'+seq+'">Cut '+seq+': '+escapeHtml(t)+' x '+escapeHtml(w)+' x '+escapeHtml(l)+'mm ('+qty+' pcs)</option>';
+      })
+    );
+    sel.innerHTML = options.join('');
+    if(priorRows.some(r=>r.dataset.seq === currentVal)){
+      sel.value = currentVal;
+    } else {
+      sel.value = '';
+    }
+  });
 }
 function applyCutForLock(destSel, forSel){
   if(destSel.value === 'production'){
@@ -1338,19 +1389,22 @@ function applyCutForLock(destSel, forSel){
     forSel.style.opacity = '0.4';
   }
 }
-document.getElementById('cr-add-row-btn').addEventListener('click', addCutRow);
+document.getElementById('cr-add-row-btn').addEventListener('click', ()=> addCutRow());
 
 function getCutRows(){
   return Array.from(document.querySelectorAll('#cr-cut-rows .cut-row')).map(row=>{
     const t = row.querySelector('.cut-thickness').value;
     const w = row.querySelector('.cut-width').value;
     const l = row.querySelector('.cut-length').value;
+    const cutFromVal = row.querySelector('.cut-from').value;
     return {
       size: (t && w && l) ? (t+' x '+w+' x '+l+' mm') : '',
       cutThickness: t, cutWidth: w, cutLength: l,
       forCustomer: row.querySelector('.cut-for').value,
       qty: getStepperValue(row.dataset.target),
-      destination: row.querySelector('.cut-dest').value
+      destination: row.querySelector('.cut-dest').value,
+      seq: Number(row.dataset.seq),
+      cutFromSeq: cutFromVal ? Number(cutFromVal) : null
     };
   }).filter(r=>r.qty>0);
 }
@@ -1534,19 +1588,34 @@ function renderCuttingHistory(){
   });
 }
 
+function fullCutLineage(cuts, cut){
+  // Walks the "cut from" chain back as far as it goes, however many layers
+  // deep, and builds a readable trail like:
+  // "16 pcs of 830mm <- from 100 pcs of 670mm <- from 275 pcs of 1220mm <- from bundle"
+  const chain = [cut.qty+' pcs of '+(cut.size||'-')];
+  let current = cut;
+  let depth = 0;
+  while(current && current.cutFromSeq && depth < 20){
+    const parent = cuts.find(c=>c.seq === current.cutFromSeq);
+    if(!parent) break;
+    chain.push(parent.qty+' pcs of '+(parent.size||'-'));
+    current = parent;
+    depth++;
+  }
+  chain.push('bundle');
+  return chain.join(' <- from ');
+}
+
+let viewedReportCuts = [];
+let cutChildCycleState = {};
+
 function viewCuttingReport(reportId){
   const report = DATA.reports.find(r=>r.id===reportId);
   if(!report) return;
   document.getElementById('viewReportIdLabel').textContent = report.id;
-  const cutsHtml = (report.cuts && report.cuts.length)
-    ? `<table style="width:100%;margin-top:8px;"><thead><tr><th>Size</th><th>Qty</th><th>Destination</th><th>For</th></tr></thead><tbody>` +
-      report.cuts.map(c=>`<tr>
-        <td>${escapeHtml(c.size||'-')}</td>
-        <td>${c.qty}</td>
-        <td>${escapeHtml(c.destination)}</td>
-        <td>${escapeHtml(c.forCustomer||'-')}</td>
-      </tr>`).join('') + '</tbody></table>'
-    : '<p class="helptext">Cut line detail isn\'t stored locally for this report (it may have synced in from another device) - totals below are still accurate.</p>';
+  viewedReportCuts = report.cuts || [];
+  cutChildCycleState = {};
+  const cutsHtml = renderCutRowCards(viewedReportCuts, null);
   document.getElementById('viewReportBody').innerHTML = `
     <div class="row" style="margin-bottom:4px;"><b>Bundle:</b> ${escapeHtml(report.bundleId)}</div>
     <div class="row" style="margin-bottom:4px;"><b>Station:</b> ${escapeHtml(report.station)}</div>
@@ -1558,6 +1627,55 @@ function viewCuttingReport(reportId){
   `;
   document.getElementById('viewReportModal').dataset.reportId = reportId;
   document.getElementById('viewReportModal').classList.add('open');
+}
+
+// focusedSeq highlights one row (from an Up/Down jump); pass null for the
+// initial render where nothing is focused yet.
+function renderCutRowCards(cuts, focusedSeq){
+  if(!cuts.length){
+    return '<p class="helptext">Cut line detail isn\'t stored locally for this report (it may have synced in from another device) - totals below are still accurate.</p>';
+  }
+  return '<div id="cutRowCards">' + cuts.map(c=>{
+    const hasParent = !!c.cutFromSeq;
+    const children = cuts.filter(x=>x.cutFromSeq === c.seq);
+    const isFocused = c.seq === focusedSeq;
+    return `<div class="cut-view-card${isFocused?' focused':''}" id="cutcard-${c.seq}" style="border:1px solid ${isFocused?'var(--amber-bright)':'var(--line)'};border-radius:4px;padding:8px 10px;margin-bottom:8px;background:${isFocused?'rgba(207,143,46,0.08)':'transparent'};">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-family:var(--mono);font-size:12px;color:var(--amber-bright);">Cut ${c.seq}</div>
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="btn secondary" style="padding:4px 10px;min-height:auto;font-size:11px;${hasParent?'':'opacity:0.35;'}" ${hasParent?'':'disabled'} onclick="viewReportNavigate(${c.seq}, 'up')">&uarr; Cut From</button>
+          <button type="button" class="btn secondary" style="padding:4px 10px;min-height:auto;font-size:11px;${children.length?'':'opacity:0.35;'}" ${children.length?'':'disabled'} onclick="viewReportNavigate(${c.seq}, 'down')">&darr; Used In${children.length>1?' ('+children.length+')':''}</button>
+        </div>
+      </div>
+      <div style="margin-top:4px;">${escapeHtml(c.size||'-')} &mdash; ${c.qty} pcs &mdash; ${escapeHtml(c.destination)}${c.forCustomer?' &mdash; '+escapeHtml(c.forCustomer):''}</div>
+      <div style="font-size:11.5px;color:var(--cream-dim);margin-top:3px;">${escapeHtml(fullCutLineage(cuts, c))}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function viewReportNavigate(seq, direction){
+  const cuts = viewedReportCuts;
+  const cut = cuts.find(c=>c.seq===seq);
+  if(!cut) return;
+  let targetSeq = null;
+  if(direction === 'up'){
+    if(!cut.cutFromSeq) return;
+    targetSeq = cut.cutFromSeq;
+  } else {
+    const children = cuts.filter(c=>c.cutFromSeq===seq).sort((a,b)=>a.seq-b.seq);
+    if(!children.length) return;
+    const idx = (cutChildCycleState[seq] || 0) % children.length;
+    cutChildCycleState[seq] = idx + 1;
+    targetSeq = children[idx].seq;
+  }
+  // Re-render so the newly focused card's Up/Down buttons and highlight are
+  // correct, then scroll to it.
+  const wrap = document.querySelector('#viewReportBody');
+  const cardsHtml = renderCutRowCards(cuts, targetSeq);
+  const cardsContainer = document.getElementById('cutRowCards');
+  if(cardsContainer) cardsContainer.outerHTML = cardsHtml;
+  const target = document.getElementById('cutcard-'+targetSeq);
+  if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
 }
 document.getElementById('viewReportCloseBtn').addEventListener('click', ()=>{
   document.getElementById('viewReportModal').classList.remove('open');
